@@ -3,7 +3,7 @@ name: Sync Main Branch
 on:
   schedule:
     - cron: '0 */3 * * *'
-  workflow_dispatch: 
+  workflow_dispatch:
 
 jobs:
   sync:
@@ -20,12 +20,6 @@ jobs:
       run: |
         git config user.name "github-actions[bot]"
         git config user.email "github-actions[bot]@users.noreply.github.com"
-
-    - name: Authenticate Git
-      env:
-        ACTIONS_USER: ${{ secrets.actions-user }}
-      run: |
-        echo "machine github.com login $ACTIONS_USER password $ACTIONS_USER" > ~/.netrc
 
     - name: Add Upstream Remote
       run: git remote add upstream https://github.com/cosmos/interchain-security.git
@@ -54,7 +48,6 @@ jobs:
         git commit -m "Disable unnecessary workflows"
 
     - name: Push changes
-      uses: ad-m/github-push-action@master
-      with:
-        github_token: ${{ secrets.actions-user }}
-        branch: main
+      run: |
+        git remote set-url origin https://${{ secrets.actions-user }}:x-oauth-basic@github.com/clemensgg/interchain-security.git
+        git push origin main

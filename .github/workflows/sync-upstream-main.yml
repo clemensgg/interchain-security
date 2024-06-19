@@ -54,7 +54,7 @@ jobs:
         git commit -m "Disable unnecessary workflows"
 
     - name: Push changes
-      uses: ad-m/github-push-action@master
-      with:
-        github_token: ${{ secrets.actions-user }}
-        branch: main
+      env:
+        GITHUB_TOKEN: ${{ secrets.actions-user }}
+      run: |
+        git push origin main

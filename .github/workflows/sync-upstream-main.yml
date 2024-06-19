@@ -36,11 +36,11 @@ jobs:
       id: get_release
       run: |
         latest_release=$(curl -s https://api.github.com/repos/cosmos/interchain-security/releases/latest)
-        echo "::set-output name=release::$latest_release"
+        echo "latest_release=${latest_release}" >> $GITHUB_ENV
 
     - name: Save Changelog
       run: |
-        release=${{ steps.get_release.outputs.release }}
+        release=${{ env.latest_release }}
         tag_name=$(echo $release | jq -r .tag_name)
         changelog=$(echo $release | jq -r .body)
         echo "Tag: $tag_name" > CHANGELOG.md

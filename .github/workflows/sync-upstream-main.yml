@@ -21,7 +21,7 @@ jobs:
       run: |
         git config user.name "github-actions[bot]"
         git config user.email "github-actions[bot]@users.noreply.github.com"
-        git config --global credential.helper store
+        git remote set-url origin https://${{ secrets.actions-user }}@github.com/clemensgg/interchain-security.git
 
     - name: Add Upstream Remote
       run: git remote add upstream https://github.com/cosmos/interchain-security.git
@@ -36,13 +36,8 @@ jobs:
 
     - name: Disable Unnecessary Workflows
       run: |
-        # Get the list of all workflow files
         workflows=$(ls .github/workflows/*.yml)
-
-        # List of workflows to keep
         keep_workflows=("sync-upstream-main.yml" "sync-upstream-releases.yml")
-
-        # Disable all workflows except the specified ones
         for workflow in $workflows; do
           filename=$(basename $workflow)
           if [[ ! " ${keep_workflows[@]} " =~ " ${filename} " ]]; then
@@ -51,7 +46,6 @@ jobs:
             sed -i '2s/^/#/' $workflow
           fi
         done
-
         git add .github/workflows/*.yml
         git commit -m "Disable unnecessary workflows"
 
@@ -59,5 +53,4 @@ jobs:
       env:
         GITHUB_TOKEN: ${{ secrets.actions-user }}
       run: |
-        git remote set-url origin https://${{ secrets.actions-user }}@github.com/clemensgg/interchain-security.git
-        git push https://${{ secrets.actions-user }}@github.com/clemensgg/interchain-security.git main
+        git push origin main

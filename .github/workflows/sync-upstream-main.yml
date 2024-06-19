@@ -32,12 +32,6 @@ jobs:
         git checkout main
         git merge upstream/main --allow-unrelated-histories || true
 
-    - name: Get Latest Release from Upstream
-      id: get_release
-      run: |
-        latest_release=$(curl -s https://api.github.com/repos/cosmos/interchain-security/releases/latest)
-        echo "latest_release=${latest_release}" >> $GITHUB_ENV
-
     - name: Disable Unnecessary Workflows
       run: |
         # Get the list of all workflow files

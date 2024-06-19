@@ -32,6 +32,22 @@ jobs:
         git checkout main
         git merge upstream/main --allow-unrelated-histories || true
 
+    - name: Get Latest Release from Upstream
+      id: get_release
+      run: |
+        latest_release=$(curl -s https://api.github.com/repos/cosmos/interchain-security/releases/latest)
+        echo "::set-output name=release::$latest_release"
+
+    - name: Save Changelog
+      run: |
+        release=${{ steps.get_release.outputs.release }}
+        tag_name=$(echo $release | jq -r .tag_name)
+        changelog=$(echo $release | jq -r .body)
+        echo "Tag: $tag_name" > CHANGELOG.md
+        echo "$changelog" >> CHANGELOG.md
+        git add CHANGELOG.md
+        git commit -m "Update changelog for $tag_name"
+
     - name: Disable Unnecessary Workflows
       run: |
         # Get the list of all workflow files
@@ -52,10 +68,9 @@ jobs:
 
         git add .github/workflows/*.yml
         git commit -m "Disable unnecessary workflows"
-        git push origin main
 
     - name: Push changes
       uses: ad-m/github-push-action@master
       with:
-        github_token: ${{ secrets.GITHUB_TOKEN }}
+        github_token: ${{ secrets.actions-user }}
         branch: main

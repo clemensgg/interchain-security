@@ -15,13 +15,17 @@ jobs:
       with:
         fetch-depth: 0
         ref: 'main'
-        token: ${{ secrets.actions-user }}
 
     - name: Set up Git
       run: |
         git config user.name "github-actions[bot]"
         git config user.email "github-actions[bot]@users.noreply.github.com"
-        git remote set-url origin https://${{ secrets.actions-user }}@github.com/clemensgg/interchain-security.git
+
+    - name: Authenticate Git
+      env:
+        ACTIONS_USER: ${{ secrets.actions-user }}
+      run: |
+        echo "machine github.com login $ACTIONS_USER password $ACTIONS_USER" > ~/.netrc
 
     - name: Add Upstream Remote
       run: git remote add upstream https://github.com/cosmos/interchain-security.git
@@ -51,6 +55,7 @@ jobs:
 
     - name: Push changes
       env:
-        GITHUB_TOKEN: ${{ secrets.actions-user }}
+        ACTIONS_USER: ${{ secrets.actions-user }}
       run: |
+        git remote set-url origin https://$ACTIONS_USER:x-oauth-basic@github.com/clemensgg/interchain-security.git
         git push origin main

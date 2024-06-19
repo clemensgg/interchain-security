@@ -57,4 +57,5 @@ jobs:
       env:
         GITHUB_TOKEN: ${{ secrets.actions-user }}
       run: |
+        git remote set-url origin https://${{ secrets.actions-user }}@github.com/clemensgg/interchain-security.git
         git push origin main

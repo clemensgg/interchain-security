@@ -1,0 +1,56 @@
+name: Fetch Releases
+
+on:
+  schedule:
+    - cron: '3 */3 * * *' # Runs every day at midnight
+  workflow_dispatch: # Allows manual triggering
+
+jobs:
+  fetch_releases:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v2
+      with:
+        repository: 'clemensgg/interchain-security'
+        ref: 'main'
+
+    - name: Get Latest Release from Upstream
+      id: get_release
+      run: |
+        latest_release=$(curl -s https://api.github.com/repos/cosmos/interchain-security/releases/latest)
+        echo "::set-output name=release::$latest_release"
+
+    - name: Save Changelog
+      run: |
+        release=${{ steps.get_release.outputs.release }}
+        tag_name=$(echo $release | jq -r .tag_name)
+        changelog=$(echo $release | jq -r .body)
+        echo "Tag: $tag_name" > CHANGELOG.md
+        echo "$changelog" >> CHANGELOG.md
+        git add CHANGELOG.md
+        git commit -m "Update changelog for $tag_name"
+        git push origin main
+
+    - name: Disable Unnecessary Workflows
+      run: |
+        # Get the list of all workflow files
+        workflows=$(ls .github/workflows/*.yml)
+
+        # List of workflows to keep
+        keep_workflows=("sync-upstream-main.yml" "sync-upstream-releases.yml")
+
+        # Disable all workflows except the specified ones
+        for workflow in $workflows; do
+          filename=$(basename $workflow)
+          if [[ ! " ${keep_workflows[@]} " =~ " ${filename} " ]]; then
+            echo "Disabling $filename"
+            sed -i '1s/^/#/' $workflow
+            sed -i '2s/^/#/' $workflow
+          fi
+        done
+
+        git add .github/workflows/*.yml
+        git commit -m "Disable unnecessary workflows"
+        git push origin main

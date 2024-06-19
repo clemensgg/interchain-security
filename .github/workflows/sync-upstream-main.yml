@@ -54,8 +54,7 @@ jobs:
         git commit -m "Disable unnecessary workflows"
 
     - name: Push changes
-      env:
-        ACTIONS_USER: ${{ secrets.actions-user }}
-      run: |
-        git remote set-url origin https://$ACTIONS_USER:x-oauth-basic@github.com/clemensgg/interchain-security.git
-        git push origin main
+      uses: ad-m/github-push-action@master
+      with:
+        github_token: ${{ secrets.actions-user }}
+        branch: main

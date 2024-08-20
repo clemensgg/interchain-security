@@ -33,10 +33,7 @@ jobs:
         git rm --cached -r .github/workflows/
         git commit -m "Remove workflow files from sync" || echo "No changes to commit"
 
-    - name: Push tags to origin
-      run: git push origin --tags
-
-    - name: Push changes
+    - name: Push tags with PAT
       run: |
         git remote set-url origin https://${{ secrets.PERSONAL_ACCESS_TOKEN }}:x-oauth-basic@github.com/clemensgg/interchain-security.git
-        git push origin main
+        git push origin --tags

@@ -49,5 +49,5 @@ jobs:
 
     - name: Push changes
       run: |
-        git remote set-url origin https://${{ secrets.actions-user }}:x-oauth-basic@github.com/clemensgg/interchain-security.git
+        git remote set-url origin https://${{ secrets.PERSONAL_ACCESS_TOKEN }}:x-oauth-basic@github.com/clemensgg/interchain-security.git
         git push origin main

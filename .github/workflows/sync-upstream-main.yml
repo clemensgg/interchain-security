@@ -23,8 +23,15 @@ jobs:
     - name: Add Upstream Remote
       run: git remote add upstream https://github.com/cosmos/interchain-security.git
 
-    - name: Fetch all tags
-      run: git fetch upstream --tags
+    - name: Fetch and merge upstream
+      run: |
+        git fetch upstream
+        git merge upstream/main --allow-unrelated-histories --no-edit || true
+    
+    - name: Remove workflow files from the commit
+      run: |
+        git rm --cached -r .github/workflows/
+        git commit -m "Remove workflow files from sync" || echo "No changes to commit"
 
     - name: Push tags to origin
       run: git push origin --tags

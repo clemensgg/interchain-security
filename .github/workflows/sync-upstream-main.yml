@@ -11,7 +11,7 @@ jobs:
 
     steps:
     - name: Checkout Repository
-      uses: actions/checkout@v2
+      uses: actions/checkout@v4
       with:
         fetch-depth: 0
         ref: 'main'
@@ -31,21 +31,6 @@ jobs:
       run: |
         git checkout main
         git merge upstream/main --allow-unrelated-histories || true
-
-    - name: Disable Unnecessary Workflows
-      run: |
-        workflows=$(ls .github/workflows/*.yml)
-        keep_workflows=("sync-upstream-main.yml" "sync-upstream-releases.yml")
-        for workflow in $workflows; do
-          filename=$(basename $workflow)
-          if [[ ! " ${keep_workflows[@]} " =~ " ${filename} " ]]; then
-            echo "Disabling $filename"
-            sed -i '1s/^/#/' $workflow
-            sed -i '2s/^/#/' $workflow
-          fi
-        done
-        git add .github/workflows/*.yml
-        git commit -m "Disable unnecessary workflows"
 
     - name: Push changes
       run: |

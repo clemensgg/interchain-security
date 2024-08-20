@@ -4,7 +4,11 @@ package main
 // sanity checks across different ICS versions.
 
 import (
-	clienttypes "github.com/cosmos/ibc-go/v7/modules/core/02-client/types"
+	"strconv"
+
+	gov "github.com/cosmos/cosmos-sdk/x/gov/types/v1"
+	clienttypes "github.com/cosmos/ibc-go/v8/modules/core/02-client/types"
+	providertypes "github.com/cosmos/interchain-security/v5/x/ccv/provider/types"
 )
 
 func compstepStartProviderChain() []Step {
@@ -55,7 +59,7 @@ func compstepsStartConsumerChain(consumerName string, proposalIndex, chainIndex 
 							Chain:         ChainID(consumerName),
 							SpawnTime:     0,
 							InitialHeight: clienttypes.Height{RevisionNumber: 0, RevisionHeight: 1},
-							Status:        "PROPOSAL_STATUS_VOTING_PERIOD",
+							Status:        strconv.Itoa(int(gov.ProposalStatus_PROPOSAL_STATUS_VOTING_PERIOD)), // breaking change in SDK: gov.ProposalStatus(gov.ProposalStatus_PROPOSAL_STATUS_VOTING_PERIOD).String(),
 						},
 					},
 					// not supported across major versions
@@ -95,7 +99,7 @@ func compstepsStartConsumerChain(consumerName string, proposalIndex, chainIndex 
 				ConsumerPubkey:  getDefaultValidators()[ValidatorID("carol")].ConsumerValPubKey,
 				ReconfigureNode: false,
 				ExpectError:     true,
-				ExpectedError:   "a validator has assigned the consumer key already: consumer key is already in use by a validator",
+				ExpectedError:   providertypes.ErrConsumerKeyInUse.Error(),
 			},
 			State: State{
 				ChainID(consumerName): ChainState{
@@ -124,7 +128,7 @@ func compstepsStartConsumerChain(consumerName string, proposalIndex, chainIndex 
 							Chain:         ChainID(consumerName),
 							SpawnTime:     0,
 							InitialHeight: clienttypes.Height{RevisionNumber: 0, RevisionHeight: 1},
-							Status:        "PROPOSAL_STATUS_PASSED",
+							Status:        strconv.Itoa(int(gov.ProposalStatus_PROPOSAL_STATUS_PASSED)), //TODO: CHECK if this is bug on SDK SIDE!!!: should be as before gov.ProposalStatus(gov.ProposalStatus_PROPOSAL_STATUS_PASSED).String(),
 						},
 					},
 					ValBalances: &map[ValidatorID]uint{
@@ -143,12 +147,6 @@ func compstepsStartConsumerChain(consumerName string, proposalIndex, chainIndex 
 					{Id: ValidatorID("alice"), Stake: 500000000, Allocation: 10000000000},
 					{Id: ValidatorID("carol"), Stake: 500000000, Allocation: 10000000000},
 				},
-				// For consumers that're launching with the provider being on an earlier version
-				// of ICS before the soft opt-out threshold was introduced, we need to set the
-				// soft opt-out threshold to 0.05 in the consumer genesis to ensure that the
-				// consumer binary doesn't panic. Sdk requires that all params are set to valid
-				// values from the genesis file.
-				GenesisChanges: ".app_state.ccvconsumer.params.soft_opt_out_threshold = \"0.05\"",
 			},
 			State: State{
 				ChainID("provi"): ChainState{

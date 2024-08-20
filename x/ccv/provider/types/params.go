@@ -4,14 +4,15 @@ import (
 	"fmt"
 	"time"
 
-	clienttypes "github.com/cosmos/ibc-go/v7/modules/core/02-client/types"
-	commitmenttypes "github.com/cosmos/ibc-go/v7/modules/core/23-commitment/types"
-	ibctmtypes "github.com/cosmos/ibc-go/v7/modules/light-clients/07-tendermint"
+	"cosmossdk.io/math"
+	clienttypes "github.com/cosmos/ibc-go/v8/modules/core/02-client/types"
+	commitmenttypes "github.com/cosmos/ibc-go/v8/modules/core/23-commitment/types"
+	ibctmtypes "github.com/cosmos/ibc-go/v8/modules/light-clients/07-tendermint"
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	paramtypes "github.com/cosmos/cosmos-sdk/x/params/types"
 
-	ccvtypes "github.com/cosmos/interchain-security/v4/x/ccv/types"
+	ccvtypes "github.com/cosmos/interchain-security/v5/x/ccv/types"
 )
 
 const (
@@ -22,12 +23,6 @@ const (
 	// DefaultTrustingPeriodFraction is the default fraction used to compute TrustingPeriod
 	// as UnbondingPeriod * TrustingPeriodFraction
 	DefaultTrustingPeriodFraction = "0.66"
-
-	// DefaultInitTimeoutPeriod defines the init timeout period
-	DefaultInitTimeoutPeriod = 7 * 24 * time.Hour
-
-	// DefaultVscTimeoutPeriod defines the VSC timeout period
-	DefaultVscTimeoutPeriod = 5 * 7 * 24 * time.Hour
 
 	// DefaultSlashMeterReplenishPeriod defines the default period for which the slash gas meter is replenished
 	DefaultSlashMeterReplenishPeriod = time.Hour
@@ -41,18 +36,36 @@ const (
 	// an epoch corresponds to 1 hour (6 * 600 = 3600 seconds).
 	// forcing int64 as the Params KeyTable expects an int64 and not int.
 	DefaultBlocksPerEpoch = int64(600)
+
+	// DefaultNumberOfEpochsToStartReceivingRewards defines the default minimum number of epochs required by a validator to validate
+	// during so that the validator can start receiving rewards. This would mean that a validator has to be a consumer validator for at least
+	// `DefaultNumberOfEpochsToStartReceivingRewards * DefaultBlocksPerEpoch` on a consumer chain to start receiving rewards from the chain.
+	// Note that after a validator starts receiving rewards, the validator would keep receiving rewards every time the
+	// consumer chain sends an IBC transfer over to the provider. This value only sets a constraint on when a validator
+	// can first start receiving rewards to avoid cases where a validator just opts in to receive rewards and then opts out
+	// immediately afterward.
+	// Current default values for blocks per epoch corresponds to about 1 hour, so with 24 being the
+	// minimum amount of epochs, this would imply that a validator has to validate at least for 1 day to receive rewards.
+	DefaultNumberOfEpochsToStartReceivingRewards = int64(24)
+
+	// DefaultMaxProviderConsensusValidators is the default maximum number of validators that will
+	// be passed on from the staking module to the consensus engine on the provider.
+	DefaultMaxProviderConsensusValidators = 180
 )
 
 // Reflection based keys for params subspace
+// Legacy: usage of x/params for parameters is deprecated.
+// Use x/ccv/provider/keeper/params instead
+// [DEPRECATED]
 var (
-	KeyTemplateClient                     = []byte("TemplateClient")
-	KeyTrustingPeriodFraction             = []byte("TrustingPeriodFraction")
-	KeyInitTimeoutPeriod                  = []byte("InitTimeoutPeriod")
-	KeyVscTimeoutPeriod                   = []byte("VscTimeoutPeriod")
-	KeySlashMeterReplenishPeriod          = []byte("SlashMeterReplenishPeriod")
-	KeySlashMeterReplenishFraction        = []byte("SlashMeterReplenishFraction")
-	KeyConsumerRewardDenomRegistrationFee = []byte("ConsumerRewardDenomRegistrationFee")
-	KeyBlocksPerEpoch                     = []byte("BlocksPerEpoch")
+	KeyTemplateClient                        = []byte("TemplateClient")
+	KeyTrustingPeriodFraction                = []byte("TrustingPeriodFraction")
+	KeySlashMeterReplenishPeriod             = []byte("SlashMeterReplenishPeriod")
+	KeySlashMeterReplenishFraction           = []byte("SlashMeterReplenishFraction")
+	KeyConsumerRewardDenomRegistrationFee    = []byte("ConsumerRewardDenomRegistrationFee")
+	KeyBlocksPerEpoch                        = []byte("BlocksPerEpoch")
+	KeyNumberOfEpochsToStartReceivingRewards = []byte("NumberOfEpochsToStartReceivingRewards")
+	KeyMaxProviderConsensusValidators        = []byte("MaxProviderConsensusValidators")
 )
 
 // ParamKeyTable returns a key table with the necessary registered provider params
@@ -65,23 +78,23 @@ func NewParams(
 	cs *ibctmtypes.ClientState,
 	trustingPeriodFraction string,
 	ccvTimeoutPeriod time.Duration,
-	initTimeoutPeriod time.Duration,
-	vscTimeoutPeriod time.Duration,
 	slashMeterReplenishPeriod time.Duration,
 	slashMeterReplenishFraction string,
 	consumerRewardDenomRegistrationFee sdk.Coin,
 	blocksPerEpoch int64,
+	numberOfEpochsToStartReceivingRewards int64,
+	maxProviderConsensusValidators int64,
 ) Params {
 	return Params{
-		TemplateClient:                     cs,
-		TrustingPeriodFraction:             trustingPeriodFraction,
-		CcvTimeoutPeriod:                   ccvTimeoutPeriod,
-		InitTimeoutPeriod:                  initTimeoutPeriod,
-		VscTimeoutPeriod:                   vscTimeoutPeriod,
-		SlashMeterReplenishPeriod:          slashMeterReplenishPeriod,
-		SlashMeterReplenishFraction:        slashMeterReplenishFraction,
-		ConsumerRewardDenomRegistrationFee: consumerRewardDenomRegistrationFee,
-		BlocksPerEpoch:                     blocksPerEpoch,
+		TemplateClient:                        cs,
+		TrustingPeriodFraction:                trustingPeriodFraction,
+		CcvTimeoutPeriod:                      ccvTimeoutPeriod,
+		SlashMeterReplenishPeriod:             slashMeterReplenishPeriod,
+		SlashMeterReplenishFraction:           slashMeterReplenishFraction,
+		ConsumerRewardDenomRegistrationFee:    consumerRewardDenomRegistrationFee,
+		BlocksPerEpoch:                        blocksPerEpoch,
+		NumberOfEpochsToStartReceivingRewards: numberOfEpochsToStartReceivingRewards,
+		MaxProviderConsensusValidators:        maxProviderConsensusValidators,
 	}
 }
 
@@ -102,17 +115,17 @@ func DefaultParams() Params {
 		),
 		DefaultTrustingPeriodFraction,
 		ccvtypes.DefaultCCVTimeoutPeriod,
-		DefaultInitTimeoutPeriod,
-		DefaultVscTimeoutPeriod,
 		DefaultSlashMeterReplenishPeriod,
 		DefaultSlashMeterReplenishFraction,
 		// Defining this inline because it's not possible to define a constant of type sdk.Coin.
 		// Following the pattern from cosmos-sdk/staking/types/params.go
 		sdk.Coin{
 			Denom:  sdk.DefaultBondDenom,
-			Amount: sdk.NewInt(10000000),
+			Amount: math.NewInt(10000000),
 		},
 		DefaultBlocksPerEpoch,
+		DefaultNumberOfEpochsToStartReceivingRewards,
+		DefaultMaxProviderConsensusValidators,
 	)
 }
 
@@ -130,12 +143,6 @@ func (p Params) Validate() error {
 	if err := ccvtypes.ValidateDuration(p.CcvTimeoutPeriod); err != nil {
 		return fmt.Errorf("ccv timeout period is invalid: %s", err)
 	}
-	if err := ccvtypes.ValidateDuration(p.InitTimeoutPeriod); err != nil {
-		return fmt.Errorf("init timeout period is invalid: %s", err)
-	}
-	if err := ccvtypes.ValidateDuration(p.VscTimeoutPeriod); err != nil {
-		return fmt.Errorf("vsc timeout period is invalid: %s", err)
-	}
 	if err := ccvtypes.ValidateDuration(p.SlashMeterReplenishPeriod); err != nil {
 		return fmt.Errorf("slash meter replenish period is invalid: %s", err)
 	}
@@ -145,8 +152,15 @@ func (p Params) Validate() error {
 	if err := ValidateCoin(p.ConsumerRewardDenomRegistrationFee); err != nil {
 		return fmt.Errorf("consumer reward denom registration fee is invalid: %s", err)
 	}
-	if err := ccvtypes.ValidateInt64(p.BlocksPerEpoch); err != nil {
+	if err := ccvtypes.ValidatePositiveInt64(p.BlocksPerEpoch); err != nil {
 		return fmt.Errorf("blocks per epoch is invalid: %s", err)
+	}
+	if err := ccvtypes.ValidatePositiveInt64(p.NumberOfEpochsToStartReceivingRewards); err != nil {
+		return fmt.Errorf("number of epochs to start receiving rewards is invalid: %s", err)
+	}
+
+	if err := ccvtypes.ValidatePositiveInt64(p.MaxProviderConsensusValidators); err != nil {
+		return fmt.Errorf("max provider consensus validators is invalid: %s", err)
 	}
 	return nil
 }
@@ -157,12 +171,12 @@ func (p *Params) ParamSetPairs() paramtypes.ParamSetPairs {
 		paramtypes.NewParamSetPair(KeyTemplateClient, p.TemplateClient, ValidateTemplateClient),
 		paramtypes.NewParamSetPair(KeyTrustingPeriodFraction, p.TrustingPeriodFraction, ccvtypes.ValidateStringFraction),
 		paramtypes.NewParamSetPair(ccvtypes.KeyCCVTimeoutPeriod, p.CcvTimeoutPeriod, ccvtypes.ValidateDuration),
-		paramtypes.NewParamSetPair(KeyInitTimeoutPeriod, p.InitTimeoutPeriod, ccvtypes.ValidateDuration),
-		paramtypes.NewParamSetPair(KeyVscTimeoutPeriod, p.VscTimeoutPeriod, ccvtypes.ValidateDuration),
 		paramtypes.NewParamSetPair(KeySlashMeterReplenishPeriod, p.SlashMeterReplenishPeriod, ccvtypes.ValidateDuration),
 		paramtypes.NewParamSetPair(KeySlashMeterReplenishFraction, p.SlashMeterReplenishFraction, ccvtypes.ValidateStringFraction),
 		paramtypes.NewParamSetPair(KeyConsumerRewardDenomRegistrationFee, p.ConsumerRewardDenomRegistrationFee, ValidateCoin),
 		paramtypes.NewParamSetPair(KeyBlocksPerEpoch, p.BlocksPerEpoch, ccvtypes.ValidatePositiveInt64),
+		paramtypes.NewParamSetPair(KeyNumberOfEpochsToStartReceivingRewards, p.NumberOfEpochsToStartReceivingRewards, ccvtypes.ValidatePositiveInt64),
+		paramtypes.NewParamSetPair(KeyMaxProviderConsensusValidators, p.MaxProviderConsensusValidators, ccvtypes.ValidatePositiveInt64),
 	}
 }
 

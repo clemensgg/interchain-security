@@ -27,6 +27,7 @@
         "ProposedConsumerChains": null,
         "ValPowers": null,
         "StakedTokens": null,
+        "IBCTransferParams": null,
         "Params": null,
         "Rewards": null,
         "ConsumerChains": null,
@@ -53,7 +54,11 @@
         "revision_height": 1
       },
       "DistributionChannel": "",
-      "TopN": 100
+      "TopN": 0,
+      "ValidatorsPowerCap": 0,
+      "ValidatorSetCap": 0,
+      "Allowlist": null,
+      "Denylist": null
     },
     "State": {
       "provi": {
@@ -64,6 +69,7 @@
         "ProposedConsumerChains": null,
         "ValPowers": null,
         "StakedTokens": null,
+        "IBCTransferParams": null,
         "Params": null,
         "Rewards": null,
         "ConsumerChains": null,
@@ -82,9 +88,9 @@
               "InitialHeight": {
                 "revision_height": 1
               },
-              "Status": "PROPOSAL_STATUS_VOTING_PERIOD"
+              "Status": "2"
             },
-            "Type": "main.ConsumerAdditionProposal"
+            "Type": "e2e.ConsumerAdditionProposal"
           }
         }
       }
@@ -106,6 +112,7 @@
         "ProposedConsumerChains": null,
         "ValPowers": null,
         "StakedTokens": null,
+        "IBCTransferParams": null,
         "Params": null,
         "Rewards": null,
         "ConsumerChains": null,
@@ -122,6 +129,14 @@
         "Proposals": null
       }
     }
+  },
+  {
+    "ActionType": "main.OptInAction",
+    "Action": {
+      "Chain": "consu",
+      "Validator": "alice"
+    },
+    "State": {}
   },
   {
     "ActionType": "main.VoteGovProposalAction",
@@ -146,6 +161,7 @@
         "ProposedConsumerChains": null,
         "ValPowers": null,
         "StakedTokens": null,
+        "IBCTransferParams": null,
         "Params": null,
         "Rewards": null,
         "ConsumerChains": null,
@@ -164,9 +180,9 @@
               "InitialHeight": {
                 "revision_height": 1
               },
-              "Status": "PROPOSAL_STATUS_PASSED"
+              "Status": "3"
             },
-            "Type": "main.ConsumerAdditionProposal"
+            "Type": "e2e.ConsumerAdditionProposal"
           }
         }
       }
@@ -184,7 +200,7 @@
           "Stake": 500000000
         }
       ],
-      "GenesisChanges": ".app_state.ccvconsumer.params.soft_opt_out_threshold = \"0.05\""
+      "GenesisChanges": ""
     },
     "State": {
       "consu": {
@@ -194,6 +210,7 @@
         "ProposedConsumerChains": null,
         "ValPowers": null,
         "StakedTokens": null,
+        "IBCTransferParams": null,
         "Params": null,
         "Rewards": null,
         "ConsumerChains": null,
@@ -213,6 +230,7 @@
         "ProposedConsumerChains": null,
         "ValPowers": null,
         "StakedTokens": null,
+        "IBCTransferParams": null,
         "Params": null,
         "Rewards": null,
         "ConsumerChains": null,
@@ -262,10 +280,10 @@
         "ValBalances": null,
         "ProposedConsumerChains": null,
         "ValPowers": {
-          "alice": 500,
-          "bob": 20
+          "alice": 500
         },
         "StakedTokens": null,
+        "IBCTransferParams": null,
         "Params": null,
         "Rewards": null,
         "ConsumerChains": null,
@@ -285,6 +303,7 @@
           "bob": 20
         },
         "StakedTokens": null,
+        "IBCTransferParams": null,
         "Params": null,
         "Rewards": null,
         "ConsumerChains": null,
@@ -311,10 +330,10 @@
         "ValBalances": null,
         "ProposedConsumerChains": null,
         "ValPowers": {
-          "alice": 511,
-          "bob": 20
+          "alice": 511
         },
         "StakedTokens": null,
+        "IBCTransferParams": null,
         "Params": null,
         "Rewards": null,
         "ConsumerChains": null,
@@ -354,9 +373,10 @@
         "ProposedConsumerChains": null,
         "ValPowers": {
           "alice": 511,
-          "bob": 20
+          "bob": 0
         },
         "StakedTokens": null,
+        "IBCTransferParams": null,
         "Params": null,
         "Rewards": null,
         "ConsumerChains": null,
@@ -379,6 +399,7 @@
           "alice": 511000000,
           "bob": 20000000
         },
+        "IBCTransferParams": null,
         "Params": null,
         "Rewards": null,
         "ConsumerChains": null,
@@ -406,9 +427,10 @@
         "ProposedConsumerChains": null,
         "ValPowers": {
           "alice": 511,
-          "bob": 20
+          "bob": 0
         },
         "StakedTokens": null,
+        "IBCTransferParams": null,
         "Params": null,
         "Rewards": null,
         "ConsumerChains": null,
@@ -431,6 +453,7 @@
           "alice": 485450000,
           "bob": 20000000
         },
+        "IBCTransferParams": null,
         "Params": null,
         "Rewards": null,
         "ConsumerChains": null,

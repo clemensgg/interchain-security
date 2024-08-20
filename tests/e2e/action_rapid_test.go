@@ -99,6 +99,7 @@ func GetActionGen() *rapid.Generator[any] {
 func CreateSubmitChangeRewardDenomsProposalActionGen() *rapid.Generator[SubmitChangeRewardDenomsProposalAction] {
 	return rapid.Custom(func(t *rapid.T) SubmitChangeRewardDenomsProposalAction {
 		return SubmitChangeRewardDenomsProposalAction{
+			Chain:   GetChainIDGen().Draw(t, "Chain"),
 			From:    GetValidatorIDGen().Draw(t, "From"),
 			Deposit: rapid.Uint().Draw(t, "Deposit"),
 			Denom:   rapid.String().Draw(t, "Denom"),
@@ -163,9 +164,9 @@ func GetStartSovereignChainActionGen() *rapid.Generator[StartSovereignChainActio
 	})
 }
 
-func GetSubmitLegacyUpgradeProposalActionGen() *rapid.Generator[LegacyUpgradeProposalAction] {
-	return rapid.Custom(func(t *rapid.T) LegacyUpgradeProposalAction {
-		return LegacyUpgradeProposalAction{
+func GetSubmitLegacyUpgradeProposalActionGen() *rapid.Generator[UpgradeProposalAction] {
+	return rapid.Custom(func(t *rapid.T) UpgradeProposalAction {
+		return UpgradeProposalAction{
 			ChainID:       GetChainIDGen().Draw(t, "ChainID"),
 			UpgradeTitle:  rapid.String().Draw(t, "UpgradeTitle"),
 			Proposer:      GetValidatorIDGen().Draw(t, "Proposer"),
@@ -269,15 +270,12 @@ func GetSubmitConsumerRemovalProposalActionGen() *rapid.Generator[SubmitConsumer
 	})
 }
 
-func GetSubmitParamChangeProposalActionGen() *rapid.Generator[SubmitParamChangeLegacyProposalAction] {
-	return rapid.Custom(func(t *rapid.T) SubmitParamChangeLegacyProposalAction {
-		return SubmitParamChangeLegacyProposalAction{
-			Chain:    GetChainIDGen().Draw(t, "Chain"),
-			From:     GetValidatorIDGen().Draw(t, "From"),
-			Deposit:  rapid.Uint().Draw(t, "Deposit"),
-			Subspace: rapid.String().Draw(t, "Subspace"),
-			Key:      rapid.String().Draw(t, "Key"),
-			Value:    rapid.String().Draw(t, "Value"), // could make this more generic in the future, since Value takes interfaces
+func GetSubmitParamChangeProposalActionGen() *rapid.Generator[SubmitEnableTransfersProposalAction] {
+	return rapid.Custom(func(t *rapid.T) SubmitEnableTransfersProposalAction {
+		return SubmitEnableTransfersProposalAction{
+			Chain:   GetChainIDGen().Draw(t, "Chain"),
+			From:    GetValidatorIDGen().Draw(t, "From"),
+			Deposit: rapid.Uint().Draw(t, "Deposit"),
 		}
 	})
 }

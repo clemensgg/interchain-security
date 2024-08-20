@@ -17,12 +17,11 @@ type StartSovereignChainAction struct {
 
 // calls a simplified startup script (start-sovereign.sh) and runs a validator node
 // upgrades are simpler with a single validator node since only one node needs to be upgraded
-func (tr TestConfig) startSovereignChain(
+func (tr Chain) startSovereignChain(
 	action StartSovereignChainAction,
-	target ExecutionTarget,
 	verbose bool,
 ) {
-	chainConfig := tr.chainConfigs["sover"]
+	chainConfig := tr.testConfig.chainConfigs["sover"]
 	type jsonValAttrs struct {
 		Mnemonic         string `json:"mnemonic"`
 		Allocation       string `json:"allocation"`
@@ -40,18 +39,18 @@ func (tr TestConfig) startSovereignChain(
 	var validators []jsonValAttrs
 	for _, val := range action.Validators {
 		validators = append(validators, jsonValAttrs{
-			Mnemonic:         tr.validatorConfigs[val.Id].Mnemonic,
-			NodeKey:          tr.validatorConfigs[val.Id].NodeKey,
+			Mnemonic:         tr.testConfig.validatorConfigs[val.Id].Mnemonic,
+			NodeKey:          tr.testConfig.validatorConfigs[val.Id].NodeKey,
 			ValId:            fmt.Sprint(val.Id),
-			PrivValidatorKey: tr.validatorConfigs[val.Id].PrivValidatorKey,
+			PrivValidatorKey: tr.testConfig.validatorConfigs[val.Id].PrivValidatorKey,
 			Allocation:       fmt.Sprint(val.Allocation) + "stake",
 			Stake:            fmt.Sprint(val.Stake) + "stake",
-			IpSuffix:         tr.validatorConfigs[val.Id].IpSuffix,
+			IpSuffix:         tr.testConfig.validatorConfigs[val.Id].IpSuffix,
 
-			ConsumerMnemonic:         tr.validatorConfigs[val.Id].ConsumerMnemonic,
-			ConsumerPrivValidatorKey: tr.validatorConfigs[val.Id].ConsumerPrivValidatorKey,
+			ConsumerMnemonic:         tr.testConfig.validatorConfigs[val.Id].ConsumerMnemonic,
+			ConsumerPrivValidatorKey: tr.testConfig.validatorConfigs[val.Id].ConsumerPrivValidatorKey,
 			// if true node will be started with consumer key for each consumer chain
-			StartWithConsumerKey: tr.validatorConfigs[val.Id].UseConsumerKey,
+			StartWithConsumerKey: tr.testConfig.validatorConfigs[val.Id].UseConsumerKey,
 		})
 	}
 
@@ -69,10 +68,10 @@ func (tr TestConfig) startSovereignChain(
 	}
 
 	isConsumer := chainConfig.BinaryName != "interchain-security-pd"
-	testScriptPath := target.GetTestScriptPath(isConsumer, "start-sovereign.sh")
-	cmd := target.ExecCommand("/bin/bash", testScriptPath, chainConfig.BinaryName, string(vals),
+	testScriptPath := tr.target.GetTestScriptPath(isConsumer, "start-sovereign.sh")
+	cmd := tr.target.ExecCommand("/bin/bash", testScriptPath, chainConfig.BinaryName, string(vals),
 		string(chainConfig.ChainId), chainConfig.IpPrefix, genesisChanges,
-		tr.tendermintConfigOverride)
+		tr.testConfig.tendermintConfigOverride)
 
 	cmdReader, err := cmd.StdoutPipe()
 	if err != nil {
@@ -101,50 +100,93 @@ func (tr TestConfig) startSovereignChain(
 	tr.addChainToRelayer(AddChainToRelayerAction{
 		Chain:     action.Chain,
 		Validator: action.Validators[0].Id,
-	}, target, verbose)
+	}, verbose)
 }
 
-type LegacyUpgradeProposalAction struct {
+type UpgradeProposalAction struct {
 	ChainID       ChainID
 	UpgradeTitle  string
 	Proposer      ValidatorID
 	UpgradeHeight uint64
+	Expedited     bool
 }
 
-func (tr *TestConfig) submitLegacyUpgradeProposal(action LegacyUpgradeProposalAction, target ExecutionTarget, verbose bool) {
-	submit := fmt.Sprintf(
-		`%s tx gov submit-legacy-proposal software-upgrade %s \
-		--title  %s \
-		--deposit 10000000stake \
-		--upgrade-height %s \
-		--upgrade-info "perform changeover" \
-		--description "perform changeover" \
-		--gas 900000 \
-		--from validator%s \
-		--keyring-backend test \
-		--chain-id %s \
-		--home %s \
-		--node %s \
-		--no-validate \
-		-y`,
-		tr.chainConfigs[ChainID("sover")].BinaryName,
-		action.UpgradeTitle,
-		action.UpgradeTitle,
-		fmt.Sprint(action.UpgradeHeight),
-		action.Proposer,
-		tr.chainConfigs[ChainID("sover")].ChainId,
-		tr.getValidatorHome(ChainID("sover"), action.Proposer),
-		tr.getValidatorNode(ChainID("sover"), action.Proposer),
-	)
-	cmd := target.ExecCommand("/bin/bash", "-c", submit)
+func (tr *Chain) submitUpgradeProposal(action UpgradeProposalAction, verbose bool) {
 
-	if verbose {
-		fmt.Println("submitUpgradeProposal cmd:", cmd.String())
-	}
-
+	// Get authority address
+	binary := tr.testConfig.chainConfigs[ChainID("sover")].BinaryName
+	cmd := tr.target.ExecCommand(binary,
+		"query", "upgrade", "authority",
+		"--node", tr.getValidatorNode(ChainID("sover"), action.Proposer),
+		"-o", "json")
 	bz, err := cmd.CombinedOutput()
 	if err != nil {
+		log.Fatalf("failed running command '%s': %v", cmd, err)
+	}
+
+	var authority struct {
+		Address string `json:"address"`
+	}
+	err = json.Unmarshal(bz, &authority)
+	if err != nil {
+		log.Fatalf("Failed getting authority: err=%v, data=%s", err, string(bz))
+	}
+
+	// Upgrade Proposal Content
+	metadata := "ipfs://CID"
+	deposit := "10000000stake"
+	summary := "my summary"
+	proposalJson := fmt.Sprintf(`
+{
+	"messages": [
+		{
+			"@type": "/cosmos.upgrade.v1beta1.MsgSoftwareUpgrade",
+			"authority": "%s",
+			"plan": {
+				"name": "sovereign-changeover",
+				"height": "%d",
+				"info": "my upgrade info",
+				"upgraded_client_state": null
+			}
+		}
+  	],
+	"metadata": "%s",
+	"title": "%s",
+	"summary": "%s",
+	"deposit": "%s",
+	"expedited": %t
+}`, authority.Address, action.UpgradeHeight, metadata, action.UpgradeTitle, summary, deposit, action.Expedited)
+
+	//#nosec G204 -- bypass unsafe quoting warning (no production code)
+	proposalPath := "/temp-proposal.json"
+	bz, err = tr.target.ExecCommand(
+		"/bin/bash", "-c", fmt.Sprintf(`echo '%s' > %s`, proposalJson, proposalPath),
+	).CombinedOutput()
+	if err != nil {
 		log.Fatal(err, "\n", string(bz))
+	}
+
+	// Submit Proposal
+	cmd = tr.target.ExecCommand(binary,
+		"tx", "gov", "submit-proposal", proposalPath,
+		"--gas", "900000",
+		"--from", "validator"+string(action.Proposer),
+		"--keyring-backend", "test",
+		"--chain-id", string(tr.testConfig.chainConfigs[ChainID("sover")].ChainId),
+		"--home", tr.getValidatorHome(ChainID("sover"), action.Proposer),
+		"--node", tr.getValidatorNode(ChainID("sover"), action.Proposer),
+		"-y")
+
+	if verbose {
+		fmt.Println("Submit proposal:", cmd.String())
+	}
+
+	bz, err = cmd.CombinedOutput()
+	if err != nil {
+		log.Fatal(err, "\n", string(bz))
+	}
+	if verbose {
+		log.Println("Response to submit-proposal: ", string(bz))
 	}
 
 	tr.waitBlocks(action.ChainID, 1, 15*time.Second)
@@ -155,7 +197,7 @@ type WaitUntilBlockAction struct {
 	Chain ChainID
 }
 
-func (tr *TestConfig) waitUntilBlockOnChain(action WaitUntilBlockAction) {
+func (tr *Chain) waitUntilBlockOnChain(action WaitUntilBlockAction) {
 	fmt.Println("waitUntilBlockOnChain is waiting for block:", action.Block)
 	tr.waitUntilBlock(action.Chain, action.Block, 120*time.Second)
 	fmt.Println("waitUntilBlockOnChain done waiting for block:", action.Block)

@@ -5,8 +5,10 @@ import (
 	"log"
 	"os/exec"
 	"strconv"
+	"strings"
 	"time"
 
+	e2e "github.com/cosmos/interchain-security/v5/tests/e2e/testlib"
 	"golang.org/x/mod/semver"
 )
 
@@ -69,10 +71,13 @@ var hermesTemplates = map[string]string{
 	`,
 }
 
-// TODO: Determine if user defined type (wrapping a primitive string) is desired in long run
+// type aliases for shared types from e2e package
 type (
-	ChainID     string
-	ValidatorID string
+	ChainID         = e2e.ChainID
+	ValidatorID     = e2e.ValidatorID
+	ValidatorConfig = e2e.ValidatorConfig
+	ChainConfig     = e2e.ChainConfig
+	ContainerConfig = e2e.ContainerConfig // will be moved back
 )
 
 // Supported Test configurations to be used with GetTestConfig
@@ -88,99 +93,12 @@ const (
 	ConsumerMisbehaviourTestCfg TestConfigType = "consumer-misbehaviour"
 	CompatibilityTestCfg        TestConfigType = "compatibility"
 	SmallMaxValidatorsTestCfg   TestConfigType = "small-max-validators"
+	InactiveProviderValsTestCfg TestConfigType = "inactive-provider-vals"
+	GovTestCfg                  TestConfigType = "gov"
+	InactiveValsGovTestCfg      TestConfigType = "inactive-vals-gov"
+	InactiveValsMintTestCfg     TestConfigType = "inactive-vals-mint"
+	MintTestCfg                 TestConfigType = "mint"
 )
-
-// Attributes that are unique to a validator. Allows us to map (part of)
-// the set of strings defined above to a set of viable validators
-type ValidatorConfig struct {
-	// Seed phrase to generate a secp256k1 key used by the validator on the provider
-	Mnemonic string
-	// Validator account address on provider marshaled to string using Bech32
-	// with Bech32Prefix = ProviderAccountPrefix
-	DelAddress string
-	// Validator account address on provider marshaled to string using Bech32
-	// with Bech32Prefix = ConsumerAccountPrefix
-	DelAddressOnConsumer string
-	// Validator operator address on provider marshaled to string using Bech32
-	// with Bech32Prefix = ProviderAccountPrefix
-	ValoperAddress string
-	// Validator operator address on provider marshaled to string using Bech32
-	// with Bech32Prefix = ConsumerAccountPrefix
-	ValoperAddressOnConsumer string
-	// Validator consensus address on provider marshaled to string using Bech32
-	// with Bech32Prefix = ProviderAccountPrefix. It matches the PrivValidatorKey below.
-	ValconsAddress string
-	// Validator consensus address on provider marshaled to string using Bech32
-	// with Bech32Prefix = ConsumerAccountPrefix.
-	ValconsAddressOnConsumer string
-	// Key used for consensus on provider
-	PrivValidatorKey string
-	NodeKey          string
-	// Must be an integer greater than 0 and less than 253
-	IpSuffix string
-
-	// consumer chain key assignment data
-	// keys are used on a new node
-
-	// Seed phrase to generate a secp256k1 key used by the validator on the consumer
-	ConsumerMnemonic string
-	// Validator account address on consumer marshaled to string using Bech32
-	// with Bech32Prefix = ConsumerAccountPrefix
-	ConsumerDelAddress string
-	// Validator account address on consumer marshaled to string using Bech32
-	// with Bech32Prefix = ProviderAccountPrefix
-	ConsumerDelAddressOnProvider string
-	// Validator operator address on consumer marshaled to string using Bech32
-	// with Bech32Prefix = ConsumerAccountPrefix
-	ConsumerValoperAddress string
-	// Validator operator address on consumer marshaled to string using Bech32
-	// with Bech32Prefix = ProviderAccountPrefix
-	ConsumerValoperAddressOnProvider string
-	// Validator consensus address on consumer marshaled to string using Bech32
-	// with Bech32Prefix = ConsumerAccountPrefix. It matches the PrivValidatorKey below.
-	ConsumerValconsAddress string
-	// Validator consensus address on consumer marshaled to string using Bech32
-	// with Bech32Prefix = ProviderAccountPrefix.
-	ConsumerValconsAddressOnProvider string
-	ConsumerValPubKey                string
-	// Key used for consensus on consumer
-	ConsumerPrivValidatorKey string
-	ConsumerNodeKey          string
-	UseConsumerKey           bool // if true the validator node will start with consumer key
-}
-
-// Attributes that are unique to a chain. Allows us to map (part of)
-// the set of strings defined above to a set of viable chains
-type ChainConfig struct {
-	ChainId ChainID
-	// The account prefix configured on the chain. For example, on the Hub, this is "cosmos"
-	AccountPrefix string
-	// Must be unique per chain
-	IpPrefix       string
-	VotingWaitTime uint
-	// Any transformations to apply to the genesis file of all chains instantiated with this chain config, as a jq string.
-	// Example: ".app_state.gov.params.voting_period = \"5s\" | .app_state.slashing.params.signed_blocks_window = \"2\" | .app_state.slashing.params.min_signed_per_window = \"0.500000000000000000\""
-	GenesisChanges string
-	BinaryName     string
-
-	// binary to use after upgrade height
-	UpgradeBinary string
-}
-
-type ContainerConfig struct {
-	ContainerName string
-	InstanceName  string
-	CcvVersion    string
-	Now           time.Time
-}
-
-type TargetConfig struct {
-	gaiaTag         string
-	localSdkPath    string
-	useGaia         bool
-	providerVersion string
-	consumerVersion string
-}
 
 type TestConfig struct {
 	// These are the non altered values during a typical test run, where multiple test runs can exist
@@ -215,14 +133,24 @@ func (tr *TestConfig) Initialize() {
 // Note: if no matching version is found an empty string is returned
 func getIcsVersion(reference string) string {
 	icsVersion := ""
-	if reference == "" {
+
+	if reference == "" || reference == VLatest {
 		return icsVersion
 	}
+
 	if semver.IsValid(reference) {
 		// remove build suffix
 		return semver.Canonical(reference)
 	}
-	for _, tag := range []string{"v2.0.0", "v2.4.0", "v2.4.0-lsm", "v3.1.0", "v3.2.0", "v3.3.0", "v4.0.0"} {
+
+	// List of all tags matching vX.Y.Z or vX.Y.Z-lsm in ascending order
+	cmd := exec.Command("git", "tag", "-l", "--sort", "v:refname", "v*.?", "v*.?-lsm", "v*.??", "v*.??-lsm")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		panic(fmt.Sprintf("Error getting sorted tag list from git: %s", err.Error()))
+	}
+	icsVersions := strings.Split(string(out), "\n")
+	for _, tag := range icsVersions {
 		//#nosec G204 -- Bypass linter warning for spawning subprocess with cmd arguments
 		cmd := exec.Command("git", "merge-base", "--is-ancestor", reference, tag)
 		out, err := cmd.CombinedOutput()
@@ -267,6 +195,16 @@ func GetTestConfig(cfgType TestConfigType, providerVersion, consumerVersion stri
 		testCfg = CompatibilityTestConfig(pv, cv)
 	case SmallMaxValidatorsTestCfg:
 		testCfg = SmallMaxValidatorsTestConfig()
+	case InactiveProviderValsTestCfg:
+		testCfg = InactiveProviderValsTestConfig()
+	case GovTestCfg:
+		testCfg = GovTestConfig()
+	case InactiveValsGovTestCfg:
+		testCfg = InactiveValsGovTestConfig()
+	case InactiveValsMintTestCfg:
+		testCfg = InactiveValsMintTestConfig()
+	case MintTestCfg:
+		testCfg = MintTestConfig()
 	default:
 		panic(fmt.Sprintf("Invalid test config: %s", cfgType))
 	}
@@ -373,6 +311,7 @@ func SlashThrottleTestConfig() TestConfig {
 				IpPrefix:       "7.7.7",
 				VotingWaitTime: 20,
 				GenesisChanges: ".app_state.gov.params.voting_period = \"20s\" | " +
+					".app_state.gov.params.expedited_voting_period = \"10s\" | " +
 					// Custom slashing parameters for testing validator downtime functionality
 					// See https://docs.cosmos.network/main/modules/slashing/04_begin_block.html#uptime-tracking
 					".app_state.slashing.params.signed_blocks_window = \"10\" | " +
@@ -414,7 +353,7 @@ func CompatibilityTestConfig(providerVersion, consumerVersion string) TestConfig
 
 	var providerConfig, consumerConfig ChainConfig
 	if !semver.IsValid(consumerVersion) {
-		fmt.Println("Using default provider chain config")
+		fmt.Printf("Invalid sem-version '%s' for provider.Using default provider chain config\n", consumerVersion)
 		consumerConfig = testCfg.chainConfigs[ChainID("consu")]
 	} else if semver.Compare(consumerVersion, "v3.0.0") < 0 {
 		fmt.Println("Using consumer chain config for v2.0.0")
@@ -451,7 +390,7 @@ func CompatibilityTestConfig(providerVersion, consumerVersion string) TestConfig
 
 	// Get the provider chain config for a specific version
 	if !semver.IsValid(providerVersion) {
-		fmt.Println("Using default provider chain config")
+		fmt.Printf("Invalid sem-version '%s' for provider. Using default provider chain config\n", providerVersion)
 		providerConfig = testCfg.chainConfigs[ChainID("provi")]
 	} else if semver.Compare(providerVersion, "v3.0.0") < 0 {
 		fmt.Println("Using provider chain config for v2.x.x")
@@ -489,6 +428,46 @@ func CompatibilityTestConfig(providerVersion, consumerVersion string) TestConfig
 				".app_state.provider.params.slash_meter_replenish_fraction = \"1.0\" | " + // This disables slash packet throttling
 				".app_state.provider.params.slash_meter_replenish_period = \"3s\"",
 		}
+	} else if semver.Compare(semver.MajorMinor(providerVersion), "v4.3.0") >= 0 && strings.HasSuffix(providerVersion, "-lsm") {
+		// v4.3.0-lsm introduced 'expedited governance proposal' which needs `expedited_voting_period` parameter to be set in genesis
+		fmt.Println("Using provider chain config for versions >= v4.3.0-lsm")
+		providerConfig = ChainConfig{
+			ChainId:        ChainID("provi"),
+			AccountPrefix:  "cosmos",
+			BinaryName:     "interchain-security-pd",
+			IpPrefix:       "7.7.7",
+			VotingWaitTime: 20,
+			GenesisChanges: ".app_state.gov.params.voting_period = \"20s\" | " +
+				".app_state.gov.params.expedited_voting_period = \"10s\" | " +
+				// Custom slashing parameters for testing validator downtime functionality
+				// See https://docs.cosmos.network/main/modules/slashing/04_begin_block.html#uptime-tracking
+				".app_state.slashing.params.signed_blocks_window = \"10\" | " +
+				".app_state.slashing.params.min_signed_per_window = \"0.500000000000000000\" | " +
+				".app_state.slashing.params.downtime_jail_duration = \"60s\" | " +
+				".app_state.slashing.params.slash_fraction_downtime = \"0.010000000000000000\" | " +
+				".app_state.provider.params.slash_meter_replenish_fraction = \"1.0\" | " + // This disables slash packet throttling
+				".app_state.provider.params.slash_meter_replenish_period = \"3s\" | " +
+				".app_state.provider.params.blocks_per_epoch = 3",
+		}
+	} else if semver.Compare(semver.MajorMinor(providerVersion), "v5.0.0") < 0 {
+		fmt.Println("Using provider chain config for v4.x.x")
+		providerConfig = ChainConfig{
+			ChainId:        ChainID("provi"),
+			AccountPrefix:  ProviderAccountPrefix,
+			BinaryName:     "interchain-security-pd",
+			IpPrefix:       "7.7.7",
+			VotingWaitTime: 20,
+			GenesisChanges: ".app_state.gov.params.voting_period = \"20s\" | " +
+				// Custom slashing parameters for testing validator downtime functionality
+				// See https://docs.cosmos.network/main/modules/slashing/04_begin_block.html#uptime-tracking
+				".app_state.slashing.params.signed_blocks_window = \"10\" | " +
+				".app_state.slashing.params.min_signed_per_window = \"0.500000000000000000\" | " +
+				".app_state.slashing.params.downtime_jail_duration = \"60s\" | " +
+				".app_state.slashing.params.slash_fraction_downtime = \"0.010000000000000000\" | " +
+				".app_state.provider.params.slash_meter_replenish_fraction = \"1.0\" | " + // This disables slash packet throttling
+				".app_state.provider.params.slash_meter_replenish_period = \"3s\" | " +
+				".app_state.provider.params.blocks_per_epoch = 3",
+		}
 	} else {
 		fmt.Println("Using default provider chain config")
 		providerConfig = testCfg.chainConfigs[ChainID("provi")]
@@ -521,6 +500,7 @@ func DefaultTestConfig() TestConfig {
 				IpPrefix:       "7.7.7",
 				VotingWaitTime: 20,
 				GenesisChanges: ".app_state.gov.params.voting_period = \"20s\" | " +
+					".app_state.gov.params.expedited_voting_period = \"10s\" | " +
 					// Custom slashing parameters for testing validator downtime functionality
 					// See https://docs.cosmos.network/main/modules/slashing/04_begin_block.html#uptime-tracking
 					".app_state.slashing.params.signed_blocks_window = \"10\" | " +
@@ -583,6 +563,7 @@ func DemocracyTestConfig(allowReward bool) TestConfig {
 				IpPrefix:       "7.7.7",
 				VotingWaitTime: 20,
 				GenesisChanges: ".app_state.gov.params.voting_period = \"20s\" | " +
+					".app_state.gov.params.expedited_voting_period = \"10s\" | " +
 					// Custom slashing parameters for testing validator downtime functionality
 					// See https://docs.cosmos.network/main/modules/slashing/04_begin_block.html#uptime-tracking
 					".app_state.slashing.params.signed_blocks_window = \"10\" | " +
@@ -608,6 +589,27 @@ func DemocracyTestConfig(allowReward bool) TestConfig {
 	return tr
 }
 
+func InactiveProviderValsTestConfig() TestConfig {
+	tr := DefaultTestConfig()
+	tr.name = "InactiveValsConfig"
+	// set the MaxProviderConsensusValidators param to 2
+	proviConfig := tr.chainConfigs[ChainID("provi")]
+	proviConfig.GenesisChanges += " | .app_state.provider.params.max_provider_consensus_validators = \"2\""
+
+	consuConfig := tr.chainConfigs[ChainID("consu")]
+	// set the soft_opt_out threshold to 0% to make sure all validators are slashed for downtime
+	consuConfig.GenesisChanges += " | .app_state.ccvconsumer.params.soft_opt_out_threshold = \"0.0\""
+	tr.chainConfigs[ChainID("provi")] = proviConfig
+	tr.chainConfigs[ChainID("consu")] = consuConfig
+
+	// make it so that carol does not use a consumer key
+	carolConfig := tr.validatorConfigs[ValidatorID("carol")]
+	carolConfig.UseConsumerKey = false
+	tr.validatorConfigs[ValidatorID("carol")] = carolConfig
+
+	return tr
+}
+
 func SmallMaxValidatorsTestConfig() TestConfig {
 	cfg := DefaultTestConfig()
 
@@ -622,6 +624,60 @@ func SmallMaxValidatorsTestConfig() TestConfig {
 	cfg.validatorConfigs["carol"] = carolConfig
 
 	return cfg
+}
+
+func GovTestConfig() TestConfig {
+	cfg := DefaultTestConfig()
+
+	// set the quorum to 50%
+	proviConfig := cfg.chainConfigs[ChainID("provi")]
+	proviConfig.GenesisChanges += "| .app_state.gov.params.quorum = \"0.5\""
+	cfg.chainConfigs[ChainID("provi")] = proviConfig
+
+	carolConfig := cfg.validatorConfigs["carol"]
+	// make carol use her own key
+	carolConfig.UseConsumerKey = false
+	cfg.validatorConfigs["carol"] = carolConfig
+
+	return cfg
+}
+
+func InactiveValsGovTestConfig() TestConfig {
+	cfg := GovTestConfig()
+
+	// set the MaxValidators to 1
+	proviConfig := cfg.chainConfigs[ChainID("provi")]
+	proviConfig.GenesisChanges += "| .app_state.staking.params.max_validators = 1"
+	cfg.chainConfigs[ChainID("provi")] = proviConfig
+
+	return cfg
+}
+
+func MintTestConfig() TestConfig {
+	cfg := GovTestConfig()
+	AdjustMint(cfg)
+
+	return cfg
+}
+
+func InactiveValsMintTestConfig() TestConfig {
+	cfg := InactiveValsGovTestConfig()
+	AdjustMint(cfg)
+
+	return cfg
+}
+
+// AdjustMint adjusts the mint parameters to have a very low goal bonded amount
+// and a high inflation rate change
+func AdjustMint(cfg TestConfig) {
+	proviConfig := cfg.chainConfigs[ChainID("provi")]
+	// total supply is 30000000000stake; we want to set the mint bonded goal to
+	// a small fraction of that
+	proviConfig.GenesisChanges += "| .app_state.mint.params.goal_bonded = \"0.001\"" +
+		"| .app_state.mint.params.inflation_rate_change = \"1\"" +
+		"| .app_state.mint.params.inflation_max = \"0.5\"" +
+		"| .app_state.mint.params.inflation_min = \"0.1\""
+	cfg.chainConfigs[ChainID("provi")] = proviConfig
 }
 
 func MultiConsumerTestConfig() TestConfig {
@@ -642,6 +698,7 @@ func MultiConsumerTestConfig() TestConfig {
 				IpPrefix:       "7.7.7",
 				VotingWaitTime: 20,
 				GenesisChanges: ".app_state.gov.params.voting_period = \"30s\" | " +
+					".app_state.gov.params.expedited_voting_period = \"10s\" | " +
 					// Custom slashing parameters for testing validator downtime functionality
 					// See https://docs.cosmos.network/main/modules/slashing/04_begin_block.html#uptime-tracking
 					".app_state.slashing.params.signed_blocks_window = \"10\" | " +
@@ -701,6 +758,7 @@ func ChangeoverTestConfig() TestConfig {
 				IpPrefix:       "7.7.7",
 				VotingWaitTime: 20,
 				GenesisChanges: ".app_state.gov.params.voting_period = \"20s\" | " +
+					".app_state.gov.params.expedited_voting_period = \"10s\" | " +
 					// Custom slashing parameters for testing validator downtime functionality
 					// See https://docs.cosmos.network/main/modules/slashing/04_begin_block.html#uptime-tracking
 					".app_state.slashing.params.signed_blocks_window = \"10\" | " +
@@ -802,6 +860,7 @@ func ConsumerMisbehaviourTestConfig() TestConfig {
 				IpPrefix:       "7.7.7",
 				VotingWaitTime: 20,
 				GenesisChanges: ".app_state.gov.params.voting_period = \"20s\" | " +
+					".app_state.gov.params.expedited_voting_period = \"10s\" | " +
 					// Custom slashing parameters for testing validator downtime functionality
 					// See https://docs.cosmos.network/main/modules/slashing/04_begin_block.html#uptime-tracking
 					".app_state.slashing.params.signed_blocks_window = \"10\" | " +
@@ -958,7 +1017,7 @@ func getValidatorConfigFromVersion(providerVersion, consumerVersion string) map[
 			},
 		}
 	case "v4.0.0":
-		fmt.Println("Using current default validator configs: ", providerVersion)
+		fmt.Println("Using current validator configs v4.0.0: ", providerVersion)
 		validatorCfg = map[ValidatorID]ValidatorConfig{
 			ValidatorID("alice"): {
 				Mnemonic:                 "pave immune ethics wrap gain ceiling always holiday employ earth tumble real ice engage false unable carbon equal fresh sick tattoo nature pupil nuclear",

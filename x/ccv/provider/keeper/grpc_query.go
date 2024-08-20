@@ -11,8 +11,8 @@ import (
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
 
-	"github.com/cosmos/interchain-security/v4/x/ccv/provider/types"
-	ccvtypes "github.com/cosmos/interchain-security/v4/x/ccv/types"
+	"github.com/cosmos/interchain-security/v5/x/ccv/provider/types"
+	ccvtypes "github.com/cosmos/interchain-security/v5/x/ccv/types"
 )
 
 var _ types.QueryServer = Keeper{}
@@ -268,8 +268,12 @@ func (k Keeper) QueryAllPairsValConAddrByConsumerChainID(goCtx context.Context, 
 }
 
 // QueryParams returns all parameters and current values of provider
-func (k Keeper) QueryParams(c context.Context, _ *types.QueryParamsRequest) (*types.QueryParamsResponse, error) {
-	ctx := sdk.UnwrapSDKContext(c)
+func (k Keeper) QueryParams(goCtx context.Context, req *types.QueryParamsRequest) (*types.QueryParamsResponse, error) {
+	if req == nil {
+		return nil, status.Error(codes.InvalidArgument, "empty request")
+	}
+
+	ctx := sdk.UnwrapSDKContext(goCtx)
 	params := k.GetParams(ctx)
 
 	return &types.QueryParamsResponse{Params: params}, nil
@@ -321,10 +325,15 @@ func (k Keeper) QueryConsumerValidators(goCtx context.Context, req *types.QueryC
 	}
 
 	var validators []*types.QueryConsumerValidatorsValidator
-	for _, v := range k.GetConsumerValSet(ctx, consumerChainID) {
+
+	consumerValSet, err := k.GetConsumerValSet(ctx, consumerChainID)
+	if err != nil {
+		return nil, status.Error(codes.Internal, err.Error())
+	}
+	for _, v := range consumerValSet {
 		validators = append(validators, &types.QueryConsumerValidatorsValidator{
 			ProviderAddress: sdk.ConsAddress(v.ProviderConsAddr).String(),
-			ConsumerKey:     v.ConsumerPublicKey,
+			ConsumerKey:     v.PublicKey,
 			Power:           v.Power,
 		})
 	}
@@ -380,12 +389,15 @@ func (k Keeper) hasToValidate(
 	}
 
 	// if the validator was not part of the last epoch, check if the validator is going to be part of te next epoch
-	bondedValidators := k.GetLastBondedValidators(ctx)
+	activeValidators, err := k.GetLastProviderConsensusActiveValidators(ctx)
+	if err != nil {
+		return false, nil
+	}
 	if topN, found := k.GetTopN(ctx, chainID); found && topN > 0 {
 		// in a Top-N chain, we automatically opt in all validators that belong to the top N
 		minPower, found := k.GetMinimumPowerInTopN(ctx, chainID)
 		if found {
-			k.OptInTopNValidators(ctx, chainID, bondedValidators, minPower)
+			k.OptInTopNValidators(ctx, chainID, activeValidators, minPower)
 		} else {
 			k.Logger(ctx).Error("did not find min power in top N for chain", "chain", chainID)
 		}
@@ -394,7 +406,11 @@ func (k Keeper) hasToValidate(
 	// if the validator is opted in and belongs to the validators of the next epoch, then if nothing changes
 	// the validator would have to validate in the next epoch
 	if k.IsOptedIn(ctx, chainID, provAddr) {
-		nextValidators := k.ComputeNextValidators(ctx, chainID, bondedValidators)
+		lastVals, err := k.GetLastBondedValidators(ctx)
+		if err != nil {
+			return false, err
+		}
+		nextValidators := k.ComputeNextValidators(ctx, chainID, lastVals)
 		for _, v := range nextValidators {
 			consAddr := sdk.ConsAddress(v.ProviderConsAddr)
 			if provAddr.ToSdkConsAddr().Equals(consAddr) {
@@ -437,8 +453,8 @@ func (k Keeper) QueryValidatorConsumerCommissionRate(goCtx context.Context, req 
 	if found {
 		res.Rate = consumerRate
 	} else {
-		v, ok := k.stakingKeeper.GetValidatorByConsAddr(ctx, consAddr)
-		if !ok {
+		v, err := k.stakingKeeper.GetValidatorByConsAddr(ctx, consAddr)
+		if err != nil {
 			return nil, status.Error(codes.InvalidArgument, fmt.Sprintf("unknown validator: %s", consAddr.String()))
 		}
 		res.Rate = v.Commission.Rate
@@ -447,33 +463,12 @@ func (k Keeper) QueryValidatorConsumerCommissionRate(goCtx context.Context, req 
 	return res, nil
 }
 
-func (k Keeper) QueryOldestUnconfirmedVsc(goCtx context.Context, req *types.QueryOldestUnconfirmedVscRequest) (*types.QueryOldestUnconfirmedVscResponse, error) {
+// QueryBlocksUntilNextEpoch returns the number of blocks until the next epoch
+func (k Keeper) QueryBlocksUntilNextEpoch(goCtx context.Context, req *types.QueryBlocksUntilNextEpochRequest) (*types.QueryBlocksUntilNextEpochResponse, error) {
 	ctx := sdk.UnwrapSDKContext(goCtx)
 
-	if req == nil {
-		return nil, status.Errorf(codes.InvalidArgument, "empty request")
-	}
+	// Calculate the blocks until the next epoch
+	blocksUntilNextEpoch := k.BlocksUntilNextEpoch(ctx)
 
-	if req.ChainId == "" {
-		return nil, status.Errorf(codes.InvalidArgument, "invalid request: chain id cannot be empty")
-	}
-
-	if _, consumerRegistered := k.GetConsumerClientId(ctx, req.ChainId); !consumerRegistered {
-		return nil, status.Error(
-			codes.NotFound,
-			errorsmod.Wrap(types.ErrUnknownConsumerChainId, req.ChainId).Error(),
-		)
-	}
-
-	// Note that GetFirstVscSendTimestamp returns the send timestamp of the oldest
-	// unconfirmed VSCPacket as these timestamps are deleted when handling VSCMaturedPackets
-	ts, found := k.GetFirstVscSendTimestamp(ctx, req.ChainId)
-	if !found {
-		return nil, status.Error(
-			codes.NotFound,
-			errorsmod.Wrap(types.ErrNoUnconfirmedVSCPacket, req.ChainId).Error(),
-		)
-	}
-
-	return &types.QueryOldestUnconfirmedVscResponse{VscSendTimestamp: ts}, nil
+	return &types.QueryBlocksUntilNextEpochResponse{BlocksUntilNextEpoch: uint64(blocksUntilNextEpoch)}, nil
 }

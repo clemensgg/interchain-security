@@ -6,11 +6,11 @@ import (
 	"reflect"
 	"testing"
 
-	appConsumer "github.com/cosmos/interchain-security/v4/app/consumer"
-	appConsumerDemocracy "github.com/cosmos/interchain-security/v4/app/consumer-democracy"
-	appProvider "github.com/cosmos/interchain-security/v4/app/provider"
-	integr "github.com/cosmos/interchain-security/v4/tests/integration"
-	icstestingutils "github.com/cosmos/interchain-security/v4/testutil/ibc_testing"
+	appConsumer "github.com/cosmos/interchain-security/v5/app/consumer"
+	appConsumerDemocracy "github.com/cosmos/interchain-security/v5/app/consumer-democracy"
+	appProvider "github.com/cosmos/interchain-security/v5/app/provider"
+	integr "github.com/cosmos/interchain-security/v5/tests/integration"
+	icstestingutils "github.com/cosmos/interchain-security/v5/testutil/ibc_testing"
 )
 
 // runCCVTestByName runs a single CCV integration test by name, using a CCVTestSuite
@@ -50,14 +50,6 @@ func findAndCallMethod(t *testing.T, suite any, methodName string) {
 }
 
 //
-// Channel init tests
-//
-
-func TestInitTimeout(t *testing.T) {
-	runCCVTestByName(t, "TestInitTimeout")
-}
-
-//
 // Consumer democracy tests
 //
 
@@ -67,6 +59,10 @@ func TestDemocracyRewardsDistribution(t *testing.T) {
 
 func TestDemocracyGovernanceWhitelisting(t *testing.T) {
 	runConsumerDemocracyTestByName(t, "TestDemocracyGovernanceWhitelisting")
+}
+
+func TestDemocracyMsgUpdateParams(t *testing.T) {
+	runConsumerDemocracyTestByName(t, "TestDemocracyMsgUpdateParams")
 }
 
 //
@@ -150,14 +146,6 @@ func TestCISBeforeCCVEstablished(t *testing.T) {
 }
 
 //
-// Soft opt out tests
-//
-
-func TestSoftOptOut(t *testing.T) {
-	runCCVTestByName(t, "TestSoftOptOut")
-}
-
-//
 // Stop consumer tests
 //
 
@@ -205,28 +193,8 @@ func TestSlashAllValidators(t *testing.T) {
 // Unbonding tests
 //
 
-func TestUndelegationNormalOperation(t *testing.T) {
-	runCCVTestByName(t, "TestUndelegationNormalOperation")
-}
-
-func TestUndelegationVscTimeout(t *testing.T) {
-	runCCVTestByName(t, "TestUndelegationVscTimeout")
-}
-
-func TestUndelegationDuringInit(t *testing.T) {
-	runCCVTestByName(t, "TestUndelegationDuringInit")
-}
-
-func TestUnbondingNoConsumer(t *testing.T) {
-	runCCVTestByName(t, "TestUnbondingNoConsumer")
-}
-
-func TestRedelegationNoConsumer(t *testing.T) {
-	runCCVTestByName(t, "TestRedelegationNoConsumer")
-}
-
-func TestRedelegationProviderFirst(t *testing.T) {
-	runCCVTestByName(t, "TestRedelegationProviderFirst")
+func TestUndelegationCompletion(t *testing.T) {
+	runCCVTestByName(t, "TestUndelegationCompletion")
 }
 
 //
@@ -277,11 +245,28 @@ func TestHandleConsumerDoubleVotingSlashesUndelegationsAndRelegations(t *testing
 	runCCVTestByName(t, "TestHandleConsumerDoubleVotingSlashesUndelegationsAndRelegations")
 }
 
+//
 // Throttle retry tests
 //
 
 func TestSlashRetries(t *testing.T) {
 	runCCVTestByName(t, "TestSlashRetries")
+}
+
+func TestKeyAssignment(t *testing.T) {
+	runCCVTestByName(t, "TestKeyAssignment")
+}
+
+//
+// Provider gov hooks test
+//
+
+func TestAfterPropSubmissionAndVotingPeriodEnded(t *testing.T) {
+	runCCVTestByName(t, "TestAfterPropSubmissionAndVotingPeriodEnded")
+}
+
+func TestGetConsumerAdditionFromProp(t *testing.T) {
+	runCCVTestByName(t, "TestGetConsumerAdditionFromProp")
 }
 
 func TestIBCTransferMiddleware(t *testing.T) {
@@ -290,14 +275,6 @@ func TestIBCTransferMiddleware(t *testing.T) {
 
 func TestAllocateTokens(t *testing.T) {
 	runCCVTestByName(t, "TestAllocateTokens")
-}
-
-func TestTransferConsumerRewardsToDistributionModule(t *testing.T) {
-	runCCVTestByName(t, "TransferConsumerRewardsToDistributionModule")
-}
-
-func TestAllocateTokensToValidator(t *testing.T) {
-	runCCVTestByName(t, "TestAllocateTokensToValidator")
 }
 
 func TestMultiConsumerRewardsDistribution(t *testing.T) {

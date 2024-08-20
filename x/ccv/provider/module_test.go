@@ -3,18 +3,22 @@ package provider_test
 import (
 	"testing"
 
-	host "github.com/cosmos/ibc-go/v7/modules/core/24-host"
+	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
+	capabilitytypes "github.com/cosmos/ibc-go/modules/capability/types"
+	host "github.com/cosmos/ibc-go/v8/modules/core/24-host"
 	"github.com/golang/mock/gomock"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
-	capabilitytypes "github.com/cosmos/cosmos-sdk/x/capability/types"
 
-	testkeeper "github.com/cosmos/interchain-security/v4/testutil/keeper"
-	"github.com/cosmos/interchain-security/v4/x/ccv/provider"
-	"github.com/cosmos/interchain-security/v4/x/ccv/provider/types"
-	ccv "github.com/cosmos/interchain-security/v4/x/ccv/types"
+	"cosmossdk.io/math"
+
+	"github.com/cosmos/interchain-security/v5/testutil/crypto"
+	testkeeper "github.com/cosmos/interchain-security/v5/testutil/keeper"
+	"github.com/cosmos/interchain-security/v5/x/ccv/provider"
+	"github.com/cosmos/interchain-security/v5/x/ccv/provider/types"
+	ccv "github.com/cosmos/interchain-security/v5/x/ccv/types"
 )
 
 // Tests the provider's InitGenesis implementation against the spec.
@@ -95,18 +99,14 @@ func TestInitGenesis(t *testing.T) {
 		keeperParams := testkeeper.NewInMemKeeperParams(t)
 		providerKeeper, ctx, ctrl, mocks := testkeeper.GetProviderKeeperAndCtx(t, keeperParams)
 
-		appModule := provider.NewAppModule(&providerKeeper, *keeperParams.ParamsSubspace)
+		appModule := provider.NewAppModule(&providerKeeper, *keeperParams.ParamsSubspace, keeperParams.StoreKey)
 		genState := types.NewGenesisState(
 			providerKeeper.GetValidatorSetUpdateId(ctx),
 			nil,
 			tc.consumerStates,
 			nil,
 			nil,
-			nil,
-			nil,
 			types.DefaultParams(),
-			nil,
-			nil,
 			nil,
 			nil,
 			nil,
@@ -141,9 +141,19 @@ func TestInitGenesis(t *testing.T) {
 		// Last total power is queried in InitGenesis, only if method has not
 		// already panicked from unowned capability.
 		if !tc.expPanic {
+			// create a mock validator
+			cId := crypto.NewCryptoIdentityFromIntSeed(234234)
+			validator := cId.SDKStakingValidator()
+			valAddr, err := sdk.ValAddressFromBech32(validator.GetOperator())
+			require.NoError(t, err)
+
 			orderedCalls = append(orderedCalls,
 				mocks.MockStakingKeeper.EXPECT().GetLastTotalPower(
-					ctx).Return(sdk.NewInt(100)).Times(1), // Return total voting power as 100
+					ctx).Return(math.NewInt(100), nil).Times(1), // Return total voting power as 100
+				mocks.MockStakingKeeper.EXPECT().GetBondedValidatorsByPower(
+					ctx).Return([]stakingtypes.Validator{validator}, nil).Times(1), // Return a single validator
+				mocks.MockStakingKeeper.EXPECT().GetLastValidatorPower(
+					ctx, valAddr).Return(int64(100), nil).Times(1), // Return total power as power of the single validator
 			)
 		}
 
@@ -159,7 +169,7 @@ func TestInitGenesis(t *testing.T) {
 			continue // Nothing else to verify
 		}
 
-		valUpdates := appModule.InitGenesis(ctx, cdc, jsonBytes)
+		appModule.InitGenesis(ctx, cdc, jsonBytes)
 
 		numStatesCounted := 0
 		for _, state := range tc.consumerStates {
@@ -174,14 +184,12 @@ func TestInitGenesis(t *testing.T) {
 		}
 		require.Equal(t, len(tc.consumerStates), numStatesCounted)
 
-		require.Empty(t, valUpdates, "InitGenesis should return no validator updates")
-
 		// Expect slash meter to be initialized to it's allowance value
 		// (replenish fraction * mocked value defined above)
 		slashMeter := providerKeeper.GetSlashMeter(ctx)
-		replenishFraction, err := sdk.NewDecFromStr(providerKeeper.GetParams(ctx).SlashMeterReplenishFraction)
+		replenishFraction, err := math.LegacyNewDecFromStr(providerKeeper.GetParams(ctx).SlashMeterReplenishFraction)
 		require.NoError(t, err)
-		expectedSlashMeterValue := sdk.NewInt(replenishFraction.MulInt(sdk.NewInt(100)).RoundInt64())
+		expectedSlashMeterValue := math.NewInt(replenishFraction.MulInt(math.NewInt(100)).RoundInt64())
 		require.Equal(t, expectedSlashMeterValue, slashMeter)
 
 		// Expect slash meter replenishment time candidate to be set to the current block time + replenish period

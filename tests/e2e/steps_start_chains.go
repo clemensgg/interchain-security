@@ -1,7 +1,10 @@
 package main
 
 import (
-	clienttypes "github.com/cosmos/ibc-go/v7/modules/core/02-client/types"
+	"strconv"
+
+	gov "github.com/cosmos/cosmos-sdk/x/gov/types/v1"
+	clienttypes "github.com/cosmos/ibc-go/v8/modules/core/02-client/types"
 )
 
 func stepStartProviderChain() []Step {
@@ -52,7 +55,7 @@ func stepsStartConsumerChain(consumerName string, proposalIndex, chainIndex uint
 							Chain:         ChainID(consumerName),
 							SpawnTime:     0,
 							InitialHeight: clienttypes.Height{RevisionNumber: 0, RevisionHeight: 1},
-							Status:        "PROPOSAL_STATUS_VOTING_PERIOD",
+							Status:        strconv.Itoa(int(gov.ProposalStatus_PROPOSAL_STATUS_VOTING_PERIOD)),
 						},
 					},
 					ProposedConsumerChains: &[]string{consumerName},
@@ -83,24 +86,16 @@ func stepsStartConsumerChain(consumerName string, proposalIndex, chainIndex uint
 			},
 		},
 		{
-			// op should be a noop - key already assigned, but by the same validator
+			// op should fail - key already assigned by the same validator
 			Action: AssignConsumerPubKeyAction{
 				Chain:           ChainID(consumerName),
 				Validator:       ValidatorID("carol"),
 				ConsumerPubkey:  getDefaultValidators()[ValidatorID("carol")].ConsumerValPubKey,
 				ReconfigureNode: false,
-				ExpectError:     false,
+				ExpectError:     true,
+				ExpectedError:   "a validator has or had assigned this consumer key already",
 			},
-			State: State{
-				ChainID(consumerName): ChainState{
-					AssignedKeys: &map[ValidatorID]string{
-						ValidatorID("carol"): getDefaultValidators()[ValidatorID("carol")].ConsumerValconsAddressOnProvider,
-					},
-					ProviderKeys: &map[ValidatorID]string{
-						ValidatorID("carol"): getDefaultValidators()[ValidatorID("carol")].ValconsAddress,
-					},
-				},
-			},
+			State: State{},
 		},
 		{
 			// op should fail - key already assigned by another validator
@@ -111,7 +106,7 @@ func stepsStartConsumerChain(consumerName string, proposalIndex, chainIndex uint
 				ConsumerPubkey:  getDefaultValidators()[ValidatorID("carol")].ConsumerValPubKey,
 				ReconfigureNode: false,
 				ExpectError:     true,
-				ExpectedError:   "a validator has assigned the consumer key already: consumer key is already in use by a validator",
+				ExpectedError:   "a validator has or had assigned this consumer key already",
 			},
 			State: State{
 				ChainID(consumerName): ChainState{
@@ -140,7 +135,7 @@ func stepsStartConsumerChain(consumerName string, proposalIndex, chainIndex uint
 							Chain:         ChainID(consumerName),
 							SpawnTime:     0,
 							InitialHeight: clienttypes.Height{RevisionNumber: 0, RevisionHeight: 1},
-							Status:        "PROPOSAL_STATUS_PASSED",
+							Status:        strconv.Itoa(int(gov.ProposalStatus_PROPOSAL_STATUS_PASSED)),
 						},
 					},
 					ValBalances: &map[ValidatorID]uint{
@@ -159,12 +154,6 @@ func stepsStartConsumerChain(consumerName string, proposalIndex, chainIndex uint
 					{Id: ValidatorID("alice"), Stake: 500000000, Allocation: 10000000000},
 					{Id: ValidatorID("carol"), Stake: 500000000, Allocation: 10000000000},
 				},
-				// For consumers that're launching with the provider being on an earlier version
-				// of ICS before the soft opt-out threshold was introduced, we need to set the
-				// soft opt-out threshold to 0.05 in the consumer genesis to ensure that the
-				// consumer binary doesn't panic. Sdk requires that all params are set to valid
-				// values from the genesis file.
-				GenesisChanges: ".app_state.ccvconsumer.params.soft_opt_out_threshold = \"0.05\"",
 			},
 			State: State{
 				ChainID("provi"): ChainState{

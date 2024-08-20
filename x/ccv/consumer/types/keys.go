@@ -6,7 +6,7 @@ import (
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
 
-	ccvtypes "github.com/cosmos/interchain-security/v4/x/ccv/types"
+	ccvtypes "github.com/cosmos/interchain-security/v5/x/ccv/types"
 )
 
 const (
@@ -65,8 +65,9 @@ const (
 	// [DEPRECATED]
 	LastStandaloneHeightByteKey
 
-	// SmallestNonOptOutPowerByteKey is the byte that will store the smallest val power that cannot opt out
-	SmallestNonOptOutPowerByteKey
+	// NOTE: This key is deprecated, but left in place to avoid consumer state migrations
+	// [DEPRECATED]
+	DeprecatedSmallestNonOptOutPowerByteKey
 
 	// HistoricalInfoKey is the byte prefix that will store the historical info for a given height
 	HistoricalInfoBytePrefix
@@ -106,12 +107,20 @@ const (
 	// SlashRecordByteKey is the single byte key storing the consumer's slash record.
 	SlashRecordByteKey
 
+	// ParametersKey is the single byte key for storing consumer's parameters.
+	ParametersByteKey
+
 	// NOTE: DO NOT ADD NEW BYTE PREFIXES HERE WITHOUT ADDING THEM TO getAllKeyPrefixes() IN keys_test.go
 )
 
 //
 // Fully defined key func section
 //
+
+// ParametersKey returns the key for the consumer parameters in the store
+func ParametersKey() []byte {
+	return []byte{ParametersByteKey}
+}
 
 // PortKey returns the key to the port ID in the store
 func PortKey() []byte {
@@ -199,10 +208,6 @@ func InitialValSetKey() []byte {
 
 func InitGenesisHeightKey() []byte {
 	return []byte{InitGenesisHeightByteKey}
-}
-
-func SmallestNonOptOutPowerKey() []byte {
-	return []byte{SmallestNonOptOutPowerByteKey}
 }
 
 // StandaloneTransferChannelIDKey returns the key to the transfer channelID that existed from a standalone chain

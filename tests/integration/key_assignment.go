@@ -1,16 +1,16 @@
 package integration
 
 import (
-	"github.com/cosmos/ibc-go/v7/testing/mock"
+	"cosmossdk.io/math"
+	"github.com/cosmos/ibc-go/v8/testing/mock"
 
-	sdk "github.com/cosmos/cosmos-sdk/types"
 	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
 
 	tmencoding "github.com/cometbft/cometbft/crypto/encoding"
 	tmprotocrypto "github.com/cometbft/cometbft/proto/tendermint/crypto"
 
-	providerkeeper "github.com/cosmos/interchain-security/v4/x/ccv/provider/keeper"
-	ccv "github.com/cosmos/interchain-security/v4/x/ccv/types"
+	providerkeeper "github.com/cosmos/interchain-security/v5/x/ccv/provider/keeper"
+	ccv "github.com/cosmos/interchain-security/v5/x/ccv/types"
 )
 
 func (s *CCVTestSuite) TestKeyAssignment() {
@@ -69,7 +69,7 @@ func (s *CCVTestSuite) TestKeyAssignment() {
 				}
 
 				// Bond some tokens on provider to change validator powers
-				bondAmt := sdk.NewInt(1000000)
+				bondAmt := math.NewInt(1000000)
 				delAddr := s.providerChain.SenderAccount.GetAddress()
 				delegate(s, delAddr, bondAmt)
 
@@ -121,10 +121,10 @@ func (s *CCVTestSuite) TestKeyAssignment() {
 				s.nextEpoch()
 
 				return nil
-			}, false, 2,
+			}, true, 2,
 		},
 		{
-			"double key assignment in same block", func(pk *providerkeeper.Keeper) error {
+			"double key assignment in same block by same val", func(pk *providerkeeper.Keeper) error {
 				// establish CCV channel
 				s.SetupCCVChannel(s.path)
 
@@ -191,10 +191,10 @@ func (s *CCVTestSuite) TestKeyAssignment() {
 				s.nextEpoch()
 
 				return nil
-			}, false, 2,
+			}, true, 2,
 		},
 		{
-			"double key assignment in different blocks", func(pk *providerkeeper.Keeper) error {
+			"double key assignment in different blocks by same val", func(pk *providerkeeper.Keeper) error {
 				// establish CCV channel
 				s.SetupCCVChannel(s.path)
 
@@ -253,12 +253,13 @@ func (s *CCVTestSuite) TestKeyAssignment() {
 
 		if !tc.expError {
 			// Bond some tokens on provider to change validator powers
-			bondAmt := sdk.NewInt(1000000)
+			bondAmt := math.NewInt(1000000)
 			delAddr := s.providerChain.SenderAccount.GetAddress()
 			delegate(s, delAddr, bondAmt)
 
 			// Send CCV packet to consumer
-			s.providerChain.NextBlock()
+			// s.providerChain.NextBlock()
+			s.nextEpoch()
 
 			// Relay all VSC packets from provider to consumer
 			relayAllCommittedPackets(

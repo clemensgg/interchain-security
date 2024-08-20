@@ -1,38 +1,46 @@
 package keeper
 
 import (
+	"context"
 	"encoding/binary"
 	"fmt"
 	"reflect"
 	"time"
 
-	clienttypes "github.com/cosmos/ibc-go/v7/modules/core/02-client/types"
-	conntypes "github.com/cosmos/ibc-go/v7/modules/core/03-connection/types"
-	channeltypes "github.com/cosmos/ibc-go/v7/modules/core/04-channel/types"
-	host "github.com/cosmos/ibc-go/v7/modules/core/24-host"
-	ibchost "github.com/cosmos/ibc-go/v7/modules/core/exported"
-	ibctmtypes "github.com/cosmos/ibc-go/v7/modules/light-clients/07-tendermint"
+	addresscodec "cosmossdk.io/core/address"
+	"cosmossdk.io/math"
+
+	clienttypes "github.com/cosmos/ibc-go/v8/modules/core/02-client/types"
+	conntypes "github.com/cosmos/ibc-go/v8/modules/core/03-connection/types"
+	channeltypes "github.com/cosmos/ibc-go/v8/modules/core/04-channel/types"
+	host "github.com/cosmos/ibc-go/v8/modules/core/24-host"
+	ibchost "github.com/cosmos/ibc-go/v8/modules/core/exported"
+	ibctmtypes "github.com/cosmos/ibc-go/v8/modules/light-clients/07-tendermint"
 
 	errorsmod "cosmossdk.io/errors"
 
+	storetypes "cosmossdk.io/store/types"
 	"github.com/cosmos/cosmos-sdk/codec"
-	storetypes "github.com/cosmos/cosmos-sdk/store/types"
 	sdk "github.com/cosmos/cosmos-sdk/types"
-	capabilitytypes "github.com/cosmos/cosmos-sdk/x/capability/types"
 	paramtypes "github.com/cosmos/cosmos-sdk/x/params/types"
+	capabilitytypes "github.com/cosmos/ibc-go/modules/capability/types"
 
-	"github.com/cometbft/cometbft/libs/log"
+	"cosmossdk.io/log"
+	govkeeper "github.com/cosmos/cosmos-sdk/x/gov/keeper"
 
-	consumertypes "github.com/cosmos/interchain-security/v4/x/ccv/consumer/types"
-	"github.com/cosmos/interchain-security/v4/x/ccv/provider/types"
-	ccv "github.com/cosmos/interchain-security/v4/x/ccv/types"
+	consumertypes "github.com/cosmos/interchain-security/v5/x/ccv/consumer/types"
+	"github.com/cosmos/interchain-security/v5/x/ccv/provider/types"
+	ccv "github.com/cosmos/interchain-security/v5/x/ccv/types"
 )
 
 // Keeper defines the Cross-Chain Validation Provider Keeper
 type Keeper struct {
-	storeKey           storetypes.StoreKey
+	// address capable of executing gov messages (gov module account)
+	authority string
+
+	storeKey storetypes.StoreKey
+
 	cdc                codec.BinaryCodec
-	paramSpace         paramtypes.Subspace
 	scopedKeeper       ccv.ScopedKeeper
 	channelKeeper      ccv.ChannelKeeper
 	portKeeper         ccv.PortKeeper
@@ -43,8 +51,11 @@ type Keeper struct {
 	slashingKeeper     ccv.SlashingKeeper
 	distributionKeeper ccv.DistributionKeeper
 	bankKeeper         ccv.BankKeeper
-	govKeeper          ccv.GovKeeper
+	govKeeper          govkeeper.Keeper
 	feeCollectorName   string
+
+	validatorAddressCodec addresscodec.Codec
+	consensusAddressCodec addresscodec.Codec
 }
 
 // NewKeeper creates a new provider Keeper instance
@@ -55,69 +66,91 @@ func NewKeeper(
 	stakingKeeper ccv.StakingKeeper, slashingKeeper ccv.SlashingKeeper,
 	accountKeeper ccv.AccountKeeper,
 	distributionKeeper ccv.DistributionKeeper, bankKeeper ccv.BankKeeper,
-	govKeeper ccv.GovKeeper, feeCollectorName string,
+	govKeeper govkeeper.Keeper,
+	authority string,
+	validatorAddressCodec, consensusAddressCodec addresscodec.Codec,
+	feeCollectorName string,
 ) Keeper {
-	// set KeyTable if it has not already been set
-	if !paramSpace.HasKeyTable() {
-		paramSpace = paramSpace.WithKeyTable(types.ParamKeyTable())
-	}
-
 	k := Keeper{
-		cdc:                cdc,
-		storeKey:           key,
-		paramSpace:         paramSpace,
-		scopedKeeper:       scopedKeeper,
-		channelKeeper:      channelKeeper,
-		portKeeper:         portKeeper,
-		connectionKeeper:   connectionKeeper,
-		clientKeeper:       clientKeeper,
-		stakingKeeper:      stakingKeeper,
-		slashingKeeper:     slashingKeeper,
-		accountKeeper:      accountKeeper,
-		distributionKeeper: distributionKeeper,
-		bankKeeper:         bankKeeper,
-		govKeeper:          govKeeper,
-		feeCollectorName:   feeCollectorName,
+		cdc:                   cdc,
+		storeKey:              key,
+		authority:             authority,
+		scopedKeeper:          scopedKeeper,
+		channelKeeper:         channelKeeper,
+		portKeeper:            portKeeper,
+		connectionKeeper:      connectionKeeper,
+		clientKeeper:          clientKeeper,
+		stakingKeeper:         stakingKeeper,
+		slashingKeeper:        slashingKeeper,
+		accountKeeper:         accountKeeper,
+		distributionKeeper:    distributionKeeper,
+		bankKeeper:            bankKeeper,
+		feeCollectorName:      feeCollectorName,
+		validatorAddressCodec: validatorAddressCodec,
+		consensusAddressCodec: consensusAddressCodec,
+		govKeeper:             govKeeper,
 	}
 
 	k.mustValidateFields()
 	return k
 }
 
-// SetParamSpace sets the param space for the provider keeper.
-// Note: this is only used for testing!
-func (k *Keeper) SetParamSpace(ctx sdk.Context, ps paramtypes.Subspace) {
-	k.paramSpace = ps
+// GetAuthority returns the x/ccv/provider module's authority.
+func (k Keeper) GetAuthority() string {
+	return k.authority
+}
+
+// ValidatorAddressCodec returns the app validator address codec.
+func (k Keeper) ValidatorAddressCodec() addresscodec.Codec {
+	return k.validatorAddressCodec
+}
+
+// ConsensusAddressCodec returns the app consensus address codec.
+func (k Keeper) ConsensusAddressCodec() addresscodec.Codec {
+	return k.consensusAddressCodec
 }
 
 // Validates that the provider keeper is initialized with non-zero and
 // non-nil values for all its fields. Otherwise this method will panic.
 func (k Keeper) mustValidateFields() {
 	// Ensures no fields are missed in this validation
-	if reflect.ValueOf(k).NumField() != 15 {
-		panic("number of fields in provider keeper is not 15")
+	if reflect.ValueOf(k).NumField() != 17 {
+		panic(fmt.Sprintf("number of fields in provider keeper is not 18 - have %d", reflect.ValueOf(k).NumField()))
 	}
 
-	ccv.PanicIfZeroOrNil(k.cdc, "cdc")                               // 1
-	ccv.PanicIfZeroOrNil(k.storeKey, "storeKey")                     // 2
-	ccv.PanicIfZeroOrNil(k.paramSpace, "paramSpace")                 // 3
-	ccv.PanicIfZeroOrNil(k.scopedKeeper, "scopedKeeper")             // 4
-	ccv.PanicIfZeroOrNil(k.channelKeeper, "channelKeeper")           // 5
-	ccv.PanicIfZeroOrNil(k.portKeeper, "portKeeper")                 // 6
-	ccv.PanicIfZeroOrNil(k.connectionKeeper, "connectionKeeper")     // 7
-	ccv.PanicIfZeroOrNil(k.accountKeeper, "accountKeeper")           // 8
-	ccv.PanicIfZeroOrNil(k.clientKeeper, "clientKeeper")             // 9
-	ccv.PanicIfZeroOrNil(k.stakingKeeper, "stakingKeeper")           // 10
-	ccv.PanicIfZeroOrNil(k.slashingKeeper, "slashingKeeper")         // 11
-	ccv.PanicIfZeroOrNil(k.distributionKeeper, "distributionKeeper") // 12
-	ccv.PanicIfZeroOrNil(k.bankKeeper, "bankKeeper")                 // 13
-	ccv.PanicIfZeroOrNil(k.govKeeper, "govKeeper")                   // 14
-	ccv.PanicIfZeroOrNil(k.feeCollectorName, "feeCollectorName")     // 15
+	if k.validatorAddressCodec == nil || k.consensusAddressCodec == nil {
+		panic("validator and/or consensus address codec are nil")
+	}
+
+	ccv.PanicIfZeroOrNil(k.cdc, "cdc")                                     // 1
+	ccv.PanicIfZeroOrNil(k.storeKey, "storeKey")                           // 2
+	ccv.PanicIfZeroOrNil(k.scopedKeeper, "scopedKeeper")                   // 3
+	ccv.PanicIfZeroOrNil(k.channelKeeper, "channelKeeper")                 // 4
+	ccv.PanicIfZeroOrNil(k.portKeeper, "portKeeper")                       // 5
+	ccv.PanicIfZeroOrNil(k.connectionKeeper, "connectionKeeper")           // 6
+	ccv.PanicIfZeroOrNil(k.accountKeeper, "accountKeeper")                 // 7
+	ccv.PanicIfZeroOrNil(k.clientKeeper, "clientKeeper")                   // 8
+	ccv.PanicIfZeroOrNil(k.stakingKeeper, "stakingKeeper")                 // 9
+	ccv.PanicIfZeroOrNil(k.slashingKeeper, "slashingKeeper")               // 10
+	ccv.PanicIfZeroOrNil(k.distributionKeeper, "distributionKeeper")       // 11
+	ccv.PanicIfZeroOrNil(k.bankKeeper, "bankKeeper")                       // 12
+	ccv.PanicIfZeroOrNil(k.feeCollectorName, "feeCollectorName")           // 13
+	ccv.PanicIfZeroOrNil(k.authority, "authority")                         // 14
+	ccv.PanicIfZeroOrNil(k.validatorAddressCodec, "validatorAddressCodec") // 15
+	ccv.PanicIfZeroOrNil(k.consensusAddressCodec, "consensusAddressCodec") // 16
+
+	// this can be nil in tests
+	// ccv.PanicIfZeroOrNil(k.govKeeper, "govKeeper")                         // 17
+}
+
+func (k *Keeper) SetGovKeeper(govKeeper govkeeper.Keeper) {
+	k.govKeeper = govKeeper
 }
 
 // Logger returns a module-specific logger.
-func (k Keeper) Logger(ctx sdk.Context) log.Logger {
-	return ctx.Logger().With("module", "x/"+ibchost.ModuleName+"-"+types.ModuleName)
+func (k Keeper) Logger(ctx context.Context) log.Logger {
+	sdkCtx := sdk.UnwrapSDKContext(ctx)
+	return sdkCtx.Logger().With("module", "x/"+ibchost.ModuleName+"-"+types.ModuleName)
 }
 
 // IsBound checks if the CCV module is already bound to the desired port
@@ -206,12 +239,12 @@ func (k Keeper) DeleteProposedConsumerChainInStore(ctx sdk.Context, proposalID u
 // GetAllProposedConsumerChainIDs returns the proposed chainID of all gov consumerAddition proposals that are still in the voting period.
 func (k Keeper) GetAllProposedConsumerChainIDs(ctx sdk.Context) []types.ProposedChain {
 	store := ctx.KVStore(k.storeKey)
-	iterator := sdk.KVStorePrefixIterator(store, []byte{types.ProposedConsumerChainByteKey})
+	iterator := storetypes.KVStorePrefixIterator(store, types.ProposedConsumerChainKeyPrefix())
 	defer iterator.Close()
 
 	proposedChains := []types.ProposedChain{}
 	for ; iterator.Valid(); iterator.Next() {
-		proposalID, err := types.ParseProposedConsumerChainKey(types.ProposedConsumerChainByteKey, iterator.Key())
+		proposalID, err := types.ParseProposedConsumerChainKey(iterator.Key())
 		if err != nil {
 			panic(fmt.Errorf("proposed chains cannot be parsed: %w", err))
 		}
@@ -241,13 +274,13 @@ func (k Keeper) GetAllPendingConsumerChainIDs(ctx sdk.Context) []string {
 // created IBC clients. Consumer chains with created clients are also referred to as registered.
 //
 // Note that the registered consumer chains are stored under keys with the following format:
-// ChainToClientBytePrefix | chainID
+// ChainToClientKeyPrefix | chainID
 // Thus, the returned array is in ascending order of chainIDs.
 func (k Keeper) GetAllRegisteredConsumerChainIDs(ctx sdk.Context) []string {
 	chainIDs := []string{}
 
 	store := ctx.KVStore(k.storeKey)
-	iterator := sdk.KVStorePrefixIterator(store, []byte{types.ChainToClientBytePrefix})
+	iterator := storetypes.KVStorePrefixIterator(store, types.ChainToClientKeyPrefix())
 	defer iterator.Close()
 
 	for ; iterator.Valid(); iterator.Next() {
@@ -286,11 +319,11 @@ func (k Keeper) DeleteChannelToChain(ctx sdk.Context, channelID string) {
 //
 // Note that mapping from CCV channel IDs to consumer chainIDs
 // is stored under keys with the following format:
-// ChannelToChainBytePrefix | channelID
+// ChannelToChainKeyPrefix | channelID
 // Thus, the returned array is in ascending order of channelIDs.
 func (k Keeper) GetAllChannelToChains(ctx sdk.Context) (channels []types.ChannelToChain) {
 	store := ctx.KVStore(k.storeKey)
-	iterator := sdk.KVStorePrefixIterator(store, []byte{types.ChannelToChainBytePrefix})
+	iterator := storetypes.KVStorePrefixIterator(store, types.ChannelToChainKeyPrefix())
 	defer iterator.Close()
 
 	for ; iterator.Valid(); iterator.Next() {
@@ -397,8 +430,6 @@ func (k Keeper) SetConsumerChain(ctx sdk.Context, channelID string) error {
 	k.SetChannelToChain(ctx, channelID, chainID)
 	// - set current block height for the consumer chain initialization
 	k.SetInitChainHeight(ctx, chainID, uint64(ctx.BlockHeight()))
-	// - remove init timeout timestamp
-	k.DeleteInitTimeoutTimestamp(ctx, chainID)
 
 	// emit event on successful addition
 	ctx.EventManager().EmitEvent(
@@ -412,260 +443,6 @@ func (k Keeper) SetConsumerChain(ctx sdk.Context, channelID string) error {
 		),
 	)
 	return nil
-}
-
-// SetUnbondingOp sets the UnbondingOp by its unique ID
-func (k Keeper) SetUnbondingOp(ctx sdk.Context, unbondingOp types.UnbondingOp) {
-	store := ctx.KVStore(k.storeKey)
-	bz, err := unbondingOp.Marshal()
-	if err != nil {
-		// An error here would indicate something is very wrong,
-		// unbondingOp is either instantiated in AfterUnbondingInitiated,
-		// updated correctly by RemoveConsumerFromUnbondingOp,
-		// or set during InitGenesis.
-		panic(fmt.Errorf("unbonding op could not be marshaled: %w", err))
-	}
-	store.Set(types.UnbondingOpKey(unbondingOp.Id), bz)
-}
-
-// GetUnbondingOp gets a UnbondingOp by its unique ID
-func (k Keeper) GetUnbondingOp(ctx sdk.Context, id uint64) (types.UnbondingOp, bool) {
-	store := ctx.KVStore(k.storeKey)
-	bz := store.Get(types.UnbondingOpKey(id))
-	if bz == nil {
-		return types.UnbondingOp{}, false
-	}
-
-	var unbondingOp types.UnbondingOp
-	if err := unbondingOp.Unmarshal(bz); err != nil {
-		// An error here would indicate something is very wrong,
-		// the UnbondingOp is assumed to be correctly serialized in SetUnbondingOp.
-		panic(fmt.Errorf("failed to unmarshal UnbondingOp: %w", err))
-	}
-
-	return unbondingOp, true
-}
-
-// DeleteUnbondingOp deletes a UnbondingOp given its ID
-func (k Keeper) DeleteUnbondingOp(ctx sdk.Context, id uint64) {
-	store := ctx.KVStore(k.storeKey)
-	store.Delete(types.UnbondingOpKey(id))
-}
-
-// GetAllUnbondingOps gets all UnbondingOps, where each UnbondingOp consists
-// of its unique ID and a list of consumer chainIDs that the unbonding operation
-// is waiting on.
-//
-// Note that UnbondingOps are stored under keys with the following format:
-// UnbondingOpBytePrefix | ID
-// Thus, the iteration is in ascending order of IDs.
-func (k Keeper) GetAllUnbondingOps(ctx sdk.Context) (ops []types.UnbondingOp) {
-	store := ctx.KVStore(k.storeKey)
-	iterator := sdk.KVStorePrefixIterator(store, []byte{types.UnbondingOpBytePrefix})
-
-	defer iterator.Close()
-	for ; iterator.Valid(); iterator.Next() {
-		id := binary.BigEndian.Uint64(iterator.Key()[1:])
-		bz := iterator.Value()
-		if bz == nil {
-			// An error here would indicate something is very wrong,
-			// the UnbondingOp is assumed to be correctly set in SetUnbondingOp.
-			panic(fmt.Errorf("unbonding operation is nil for id %d", id))
-		}
-		var unbondingOp types.UnbondingOp
-		if err := unbondingOp.Unmarshal(bz); err != nil {
-			// An error here would indicate something is very wrong,
-			// the UnbondingOp is assumed to be correctly serialized in SetUnbondingOp.
-			panic(fmt.Errorf("failed to unmarshal UnbondingOp: %w", err))
-		}
-
-		ops = append(ops, unbondingOp)
-	}
-
-	return ops
-}
-
-// RemoveConsumerFromUnbondingOp removes a consumer chain ID that the unbonding op with 'id' is waiting on.
-// The method returns true if the unbonding op can complete. In this case the record is removed from store.
-// The method panics if the unbonding op with 'id' is not found.
-func (k Keeper) RemoveConsumerFromUnbondingOp(ctx sdk.Context, id uint64, chainID string) (canComplete bool) {
-	// Get the unbonding op from store
-	unbondingOp, found := k.GetUnbondingOp(ctx, id)
-	if !found {
-		panic(fmt.Errorf("internal state corrupted; could not find UnbondingOp with ID %d", id))
-	}
-
-	// Remove consumer chain ID from unbonding op
-	var numRemoved int
-	unbondingOp.UnbondingConsumerChains, numRemoved = removeStringFromSlice(unbondingOp.UnbondingConsumerChains, chainID)
-	if numRemoved > 0 {
-		k.Logger(ctx).Debug("unbonding operation matured on consumer", "chainID", chainID, "opID", id)
-
-		if len(unbondingOp.UnbondingConsumerChains) == 0 {
-			// Delete unbonding op
-			k.DeleteUnbondingOp(ctx, id)
-			// No more consumer chains; the unbonding op can complete
-			canComplete = true
-		} else {
-			// Update unbonding op in store
-			k.SetUnbondingOp(ctx, unbondingOp)
-		}
-	}
-	return
-}
-
-func removeStringFromSlice(slice []string, x string) (newSlice []string, numRemoved int) {
-	for _, y := range slice {
-		if x != y {
-			newSlice = append(newSlice, y)
-		}
-	}
-
-	return newSlice, len(slice) - len(newSlice)
-}
-
-// SetUnbondingOpIndex sets the IDs of unbonding operations that are waiting for
-// a VSCMaturedPacket with vscID from a consumer with chainID
-func (k Keeper) SetUnbondingOpIndex(ctx sdk.Context, chainID string, vscID uint64, ids []uint64) {
-	store := ctx.KVStore(k.storeKey)
-
-	vscUnbondingOps := types.VscUnbondingOps{
-		VscId:          vscID,
-		UnbondingOpIds: ids,
-	}
-	bz, err := vscUnbondingOps.Marshal()
-	if err != nil {
-		// An error here would indicate something is very wrong,
-		// vscUnbondingOps is instantiated in this method and should be able to be marshaled.
-		panic(fmt.Errorf("failed to marshal VscUnbondingOps: %w", err))
-	}
-
-	store.Set(types.UnbondingOpIndexKey(chainID, vscID), bz)
-}
-
-// GetAllUnbondingOpIndexes gets all unbonding indexes for a given chain id,
-// i.e., all the IDs of unbonding operations that are waiting for
-// VSCMaturedPackets from a consumer with chainID.
-//
-// Note that the unbonding indexes for a given chainID are stored under keys with the following format:
-// UnbondingOpIndexBytePrefix | len(chainID) | chainID | vscID
-// Thus, the returned array is in ascending order of vscIDs.
-func (k Keeper) GetAllUnbondingOpIndexes(ctx sdk.Context, chainID string) (indexes []types.VscUnbondingOps) {
-	store := ctx.KVStore(k.storeKey)
-	iterator := sdk.KVStorePrefixIterator(store, types.ChainIdWithLenKey(types.UnbondingOpIndexBytePrefix, chainID))
-	defer iterator.Close()
-
-	for ; iterator.Valid(); iterator.Next() {
-		var vscUnbondingOps types.VscUnbondingOps
-		if err := vscUnbondingOps.Unmarshal(iterator.Value()); err != nil {
-			// An error here would indicate something is very wrong,
-			// the VscUnbondingOps are assumed to be correctly serialized in SetUnbondingOpIndex.
-			panic(fmt.Errorf("failed to unmarshal VscUnbondingOps: %w", err))
-		}
-
-		indexes = append(indexes, types.VscUnbondingOps{
-			VscId:          vscUnbondingOps.GetVscId(),
-			UnbondingOpIds: vscUnbondingOps.GetUnbondingOpIds(),
-		})
-	}
-
-	return indexes
-}
-
-// GetUnbondingOpIndex gets the IDs of unbonding operations that are waiting for
-// a VSCMaturedPacket with vscID from a consumer with chainID
-func (k Keeper) GetUnbondingOpIndex(ctx sdk.Context, chainID string, vscID uint64) ([]uint64, bool) {
-	store := ctx.KVStore(k.storeKey)
-
-	bz := store.Get(types.UnbondingOpIndexKey(chainID, vscID))
-	if bz == nil {
-		return []uint64{}, false
-	}
-
-	var vscUnbondingOps types.VscUnbondingOps
-	if err := vscUnbondingOps.Unmarshal(bz); err != nil {
-		// An error here would indicate something is very wrong,
-		// the VscUnbondingOps are assumed to be correctly serialized in SetUnbondingOpIndex.
-		panic(fmt.Errorf("failed to unmarshal VscUnbondingOps: %w", err))
-	}
-
-	return vscUnbondingOps.GetUnbondingOpIds(), true
-}
-
-// DeleteUnbondingOpIndex deletes the IDs of unbonding operations that are waiting for
-// a VSCMaturedPacket with vscID from a consumer with chainID
-func (k Keeper) DeleteUnbondingOpIndex(ctx sdk.Context, chainID string, vscID uint64) {
-	store := ctx.KVStore(k.storeKey)
-	store.Delete(types.UnbondingOpIndexKey(chainID, vscID))
-}
-
-// GetUnbondingOpsFromIndex gets the unbonding ops waiting for a given chainID and vscID
-func (k Keeper) GetUnbondingOpsFromIndex(ctx sdk.Context, chainID string, valsetUpdateID uint64) (entries []types.UnbondingOp) {
-	ids, found := k.GetUnbondingOpIndex(ctx, chainID, valsetUpdateID)
-	if !found {
-		return entries
-	}
-	for _, id := range ids {
-		entry, found := k.GetUnbondingOp(ctx, id)
-		if !found {
-			// An error here would indicate something is very wrong.
-			// Every UnbondingOpIndex is assumed to have the corresponding UnbondingOps set in store.
-			// This is done in AfterUnbondingInitiated and InitGenesis.
-			panic("did not find UnbondingOp according to index- index was probably not correctly updated")
-		}
-		entries = append(entries, entry)
-	}
-
-	return entries
-}
-
-// GetMaturedUnbondingOps returns the list of matured unbonding operation ids
-func (k Keeper) GetMaturedUnbondingOps(ctx sdk.Context) (ids []uint64) {
-	store := ctx.KVStore(k.storeKey)
-	bz := store.Get(types.MaturedUnbondingOpsKey())
-	if bz == nil {
-		// Note that every call to ConsumeMaturedUnbondingOps
-		// deletes the MaturedUnbondingOpsKey, which means that
-		// the first call to GetMaturedUnbondingOps after that
-		// will enter this branch.
-		return nil
-	}
-
-	var ops types.MaturedUnbondingOps
-	if err := ops.Unmarshal(bz); err != nil {
-		// An error here would indicate something is very wrong,
-		// the MaturedUnbondingOps are assumed to be correctly serialized in AppendMaturedUnbondingOps.
-		panic(fmt.Errorf("failed to unmarshal MaturedUnbondingOps: %w", err))
-	}
-	return ops.GetIds()
-}
-
-// AppendMaturedUnbondingOps adds a list of ids to the list of matured unbonding operation ids
-func (k Keeper) AppendMaturedUnbondingOps(ctx sdk.Context, ids []uint64) {
-	if len(ids) == 0 {
-		return
-	}
-	existingIds := k.GetMaturedUnbondingOps(ctx)
-	maturedOps := types.MaturedUnbondingOps{
-		Ids: append(existingIds, ids...),
-	}
-
-	store := ctx.KVStore(k.storeKey)
-	bz, err := maturedOps.Marshal()
-	if err != nil {
-		// An error here would indicate something is very wrong,
-		// maturedOps is instantiated in this method and should be able to be marshaled.
-		panic(fmt.Sprintf("failed to marshal matured unbonding operations: %s", err))
-	}
-	store.Set(types.MaturedUnbondingOpsKey(), bz)
-}
-
-// ConsumeMaturedUnbondingOps empties and returns list of matured unbonding operation ids (if it exists)
-func (k Keeper) ConsumeMaturedUnbondingOps(ctx sdk.Context) []uint64 {
-	ids := k.GetMaturedUnbondingOps(ctx)
-	store := ctx.KVStore(k.storeKey)
-	store.Delete(types.MaturedUnbondingOpsKey())
-	return ids
 }
 
 // Retrieves the underlying client state corresponding to a connection ID.
@@ -747,11 +524,11 @@ func (k Keeper) GetValsetUpdateBlockHeight(ctx sdk.Context, valsetUpdateId uint6
 // GetAllValsetUpdateBlockHeights gets all the block heights for all valset updates
 //
 // Note that the mapping from vscIDs to block heights is stored under keys with the following format:
-// ValsetUpdateBlockHeightBytePrefix | vscID
+// ValsetUpdateBlockHeightKeyPrefix | vscID
 // Thus, the returned array is in ascending order of vscIDs.
 func (k Keeper) GetAllValsetUpdateBlockHeights(ctx sdk.Context) (valsetUpdateBlockHeights []types.ValsetUpdateIdToHeight) {
 	store := ctx.KVStore(k.storeKey)
-	iterator := sdk.KVStorePrefixIterator(store, []byte{types.ValsetUpdateBlockHeightBytePrefix})
+	iterator := storetypes.KVStorePrefixIterator(store, types.ValsetUpdateBlockHeightKeyPrefix())
 
 	defer iterator.Close()
 	for ; iterator.Valid(); iterator.Next() {
@@ -925,174 +702,6 @@ func (k Keeper) DeleteConsumerClientId(ctx sdk.Context, chainID string) {
 	store.Delete(types.ChainToClientKey(chainID))
 }
 
-// SetInitTimeoutTimestamp sets the init timeout timestamp for the given chain ID
-func (k Keeper) SetInitTimeoutTimestamp(ctx sdk.Context, chainID string, ts uint64) {
-	store := ctx.KVStore(k.storeKey)
-	tsBytes := make([]byte, 8)
-	binary.BigEndian.PutUint64(tsBytes, ts)
-	store.Set(types.InitTimeoutTimestampKey(chainID), tsBytes)
-}
-
-// GetInitTimeoutTimestamp returns the init timeout timestamp for the given chain ID.
-// This method is used only in testing.
-func (k Keeper) GetInitTimeoutTimestamp(ctx sdk.Context, chainID string) (uint64, bool) {
-	store := ctx.KVStore(k.storeKey)
-	bz := store.Get(types.InitTimeoutTimestampKey(chainID))
-	if bz == nil {
-		return 0, false
-	}
-	return binary.BigEndian.Uint64(bz), true
-}
-
-// DeleteInitTimeoutTimestamp removes from the store the init timeout timestamp for the given chainID.
-func (k Keeper) DeleteInitTimeoutTimestamp(ctx sdk.Context, chainID string) {
-	store := ctx.KVStore(k.storeKey)
-	store.Delete(types.InitTimeoutTimestampKey(chainID))
-}
-
-// GetAllInitTimeoutTimestamps gets all init timeout timestamps in the store.
-//
-// Note that the init timeout timestamps are stored under keys with the following format:
-// InitTimeoutTimestampBytePrefix | chainID
-// Thus, the returned array is in ascending order of chainIDs (NOT in timestamp order).
-func (k Keeper) GetAllInitTimeoutTimestamps(ctx sdk.Context) (initTimeoutTimestamps []types.InitTimeoutTimestamp) {
-	store := ctx.KVStore(k.storeKey)
-	iterator := sdk.KVStorePrefixIterator(store, []byte{types.InitTimeoutTimestampBytePrefix})
-
-	defer iterator.Close()
-	for ; iterator.Valid(); iterator.Next() {
-		chainID := string(iterator.Key()[1:])
-		ts := binary.BigEndian.Uint64(iterator.Value())
-
-		initTimeoutTimestamps = append(initTimeoutTimestamps, types.InitTimeoutTimestamp{
-			ChainId:   chainID,
-			Timestamp: ts,
-		})
-	}
-
-	return initTimeoutTimestamps
-}
-
-// SetVscSendTimestamp sets the VSC send timestamp
-// for a VSCPacket with ID vscID sent to a chain with ID chainID
-func (k Keeper) SetVscSendTimestamp(
-	ctx sdk.Context,
-	chainID string,
-	vscID uint64,
-	timestamp time.Time,
-) {
-	store := ctx.KVStore(k.storeKey)
-
-	// Convert timestamp into bytes for storage
-	timeBz := sdk.FormatTimeBytes(timestamp)
-
-	store.Set(types.VscSendingTimestampKey(chainID, vscID), timeBz)
-}
-
-// GetVscSendTimestamp returns a VSC send timestamp by chainID and vscID
-//
-// Note: This method is used only for testing.
-func (k Keeper) GetVscSendTimestamp(ctx sdk.Context, chainID string, vscID uint64) (time.Time, bool) {
-	store := ctx.KVStore(k.storeKey)
-
-	timeBz := store.Get(types.VscSendingTimestampKey(chainID, vscID))
-	if timeBz == nil {
-		return time.Time{}, false
-	}
-
-	ts, err := sdk.ParseTimeBytes(timeBz)
-	if err != nil {
-		return time.Time{}, false
-	}
-	return ts, true
-}
-
-// DeleteVscSendTimestamp removes from the store a specific VSC send timestamp
-// for the given chainID and vscID.
-func (k Keeper) DeleteVscSendTimestamp(ctx sdk.Context, chainID string, vscID uint64) {
-	store := ctx.KVStore(k.storeKey)
-	store.Delete(types.VscSendingTimestampKey(chainID, vscID))
-}
-
-// GetAllVscSendTimestamps gets an array of all the vsc send timestamps of the given chainID.
-//
-// Note that the vsc send timestamps of a given chainID are stored under keys with the following format:
-// VscSendTimestampBytePrefix | len(chainID) | chainID | vscID
-// Thus, the iteration is in ascending order of vscIDs, and as a result in send timestamp order.
-func (k Keeper) GetAllVscSendTimestamps(ctx sdk.Context, chainID string) (vscSendTimestamps []types.VscSendTimestamp) {
-	store := ctx.KVStore(k.storeKey)
-	iterator := sdk.KVStorePrefixIterator(store, types.ChainIdWithLenKey(types.VscSendTimestampBytePrefix, chainID))
-	defer iterator.Close()
-
-	for ; iterator.Valid(); iterator.Next() {
-		_, vscID, err := types.ParseVscSendingTimestampKey(iterator.Key())
-		if err != nil {
-			// An error here would indicate something is very wrong,
-			// the store key is assumed to be correctly serialized in SetVscSendTimestamp.
-			panic(fmt.Errorf("failed to parse VscSendTimestampKey: %w", err))
-		}
-		ts, err := sdk.ParseTimeBytes(iterator.Value())
-		if err != nil {
-			// An error here would indicate something is very wrong,
-			// the timestamp is assumed to be correctly serialized in SetVscSendTimestamp.
-			panic(fmt.Errorf("failed to parse timestamp value: %w", err))
-		}
-
-		vscSendTimestamps = append(vscSendTimestamps, types.VscSendTimestamp{
-			VscId:     vscID,
-			Timestamp: ts,
-		})
-	}
-
-	return vscSendTimestamps
-}
-
-// DeleteVscSendTimestampsForConsumer deletes all VSC send timestamps for a given consumer chain
-func (k Keeper) DeleteVscSendTimestampsForConsumer(ctx sdk.Context, consumerChainID string) {
-	store := ctx.KVStore(k.storeKey)
-	iterator := sdk.KVStorePrefixIterator(store, types.ChainIdWithLenKey(types.VscSendTimestampBytePrefix, consumerChainID))
-	defer iterator.Close()
-
-	keysToDel := [][]byte{}
-	for ; iterator.Valid(); iterator.Next() {
-		keysToDel = append(keysToDel, iterator.Key())
-	}
-
-	// Delete data for this consumer
-	for _, key := range keysToDel {
-		store.Delete(key)
-	}
-}
-
-// GetFirstVscSendTimestamp gets the vsc send timestamp with the lowest vscID for the given chainID.
-func (k Keeper) GetFirstVscSendTimestamp(ctx sdk.Context, chainID string) (vscSendTimestamp types.VscSendTimestamp, found bool) {
-	store := ctx.KVStore(k.storeKey)
-	iterator := sdk.KVStorePrefixIterator(store, types.ChainIdWithLenKey(types.VscSendTimestampBytePrefix, chainID))
-	defer iterator.Close()
-
-	if iterator.Valid() {
-		_, vscID, err := types.ParseVscSendingTimestampKey(iterator.Key())
-		if err != nil {
-			// An error here would indicate something is very wrong,
-			// the store key is assumed to be correctly serialized in SetVscSendTimestamp.
-			panic(fmt.Errorf("failed to parse VscSendTimestampKey: %w", err))
-		}
-		ts, err := sdk.ParseTimeBytes(iterator.Value())
-		if err != nil {
-			// An error here would indicate something is very wrong,
-			// the timestamp is assumed to be correctly serialized in SetVscSendTimestamp.
-			panic(fmt.Errorf("failed to parse timestamp value: %w", err))
-		}
-
-		return types.VscSendTimestamp{
-			VscId:     vscID,
-			Timestamp: ts,
-		}, true
-	}
-
-	return types.VscSendTimestamp{}, false
-}
-
 // SetSlashLog updates validator's slash log for a consumer chain
 // If an entry exists for a given validator address, at least one
 // double signing slash packet was received by the provider from at least one consumer chain
@@ -1115,7 +724,7 @@ func (k Keeper) GetSlashLog(
 	return bz != nil
 }
 
-func (k Keeper) BondDenom(ctx sdk.Context) string {
+func (k Keeper) BondDenom(ctx sdk.Context) (string, error) {
 	return k.stakingKeeper.BondDenom(ctx)
 }
 
@@ -1213,8 +822,8 @@ func (k Keeper) GetAllOptedIn(
 	chainID string,
 ) (providerConsAddresses []types.ProviderConsAddress) {
 	store := ctx.KVStore(k.storeKey)
-	key := types.ChainIdWithLenKey(types.OptedInBytePrefix, chainID)
-	iterator := sdk.KVStorePrefixIterator(store, key)
+	key := types.ChainIdWithLenKey(types.OptedInKeyPrefix(), chainID)
+	iterator := storetypes.KVStorePrefixIterator(store, key)
 	defer iterator.Close()
 
 	for ; iterator.Valid(); iterator.Next() {
@@ -1230,8 +839,8 @@ func (k Keeper) DeleteAllOptedIn(
 	chainID string,
 ) {
 	store := ctx.KVStore(k.storeKey)
-	key := types.ChainIdWithLenKey(types.OptedInBytePrefix, chainID)
-	iterator := sdk.KVStorePrefixIterator(store, key)
+	key := types.ChainIdWithLenKey(types.OptedInKeyPrefix(), chainID)
+	iterator := storetypes.KVStorePrefixIterator(store, key)
 
 	var keysToDel [][]byte
 	defer iterator.Close()
@@ -1249,7 +858,7 @@ func (k Keeper) SetConsumerCommissionRate(
 	ctx sdk.Context,
 	chainID string,
 	providerAddr types.ProviderConsAddress,
-	commissionRate sdk.Dec,
+	commissionRate math.LegacyDec,
 ) error {
 	store := ctx.KVStore(k.storeKey)
 	bz, err := commissionRate.Marshal()
@@ -1269,18 +878,18 @@ func (k Keeper) GetConsumerCommissionRate(
 	ctx sdk.Context,
 	chainID string,
 	providerAddr types.ProviderConsAddress,
-) (sdk.Dec, bool) {
+) (math.LegacyDec, bool) {
 	store := ctx.KVStore(k.storeKey)
 	bz := store.Get(types.ConsumerCommissionRateKey(chainID, providerAddr))
 	if bz == nil {
-		return sdk.ZeroDec(), false
+		return math.LegacyZeroDec(), false
 	}
 
-	cr := sdk.Dec{}
+	cr := math.LegacyZeroDec()
 	// handle error gracefully since it's called in BeginBlockRD
 	if err := cr.Unmarshal(bz); err != nil {
 		k.Logger(ctx).Error("consumer commission rate unmarshalling failed: %s", err)
-		return sdk.ZeroDec(), false
+		return cr, false
 	}
 
 	return cr, true
@@ -1293,8 +902,8 @@ func (k Keeper) GetAllCommissionRateValidators(
 	chainID string,
 ) (addresses []types.ProviderConsAddress) {
 	store := ctx.KVStore(k.storeKey)
-	key := types.ChainIdWithLenKey(types.ConsumerCommissionRatePrefix, chainID)
-	iterator := sdk.KVStorePrefixIterator(store, key)
+	key := types.ChainIdWithLenKey(types.ConsumerCommissionRateKeyPrefix(), chainID)
+	iterator := storetypes.KVStorePrefixIterator(store, key)
 	defer iterator.Close()
 
 	for ; iterator.Valid(); iterator.Next() {
@@ -1395,7 +1004,7 @@ func (k Keeper) SetAllowlist(
 	providerAddr types.ProviderConsAddress,
 ) {
 	store := ctx.KVStore(k.storeKey)
-	store.Set(types.AllowlistCapKey(chainID, providerAddr), []byte{})
+	store.Set(types.AllowlistKey(chainID, providerAddr), []byte{})
 }
 
 // GetAllowList returns all allowlisted validators
@@ -1404,8 +1013,8 @@ func (k Keeper) GetAllowList(
 	chainID string,
 ) (providerConsAddresses []types.ProviderConsAddress) {
 	store := ctx.KVStore(k.storeKey)
-	key := types.ChainIdWithLenKey(types.AllowlistPrefix, chainID)
-	iterator := sdk.KVStorePrefixIterator(store, key)
+	key := types.ChainIdWithLenKey(types.AllowlistKeyPrefix(), chainID)
+	iterator := storetypes.KVStorePrefixIterator(store, key)
 	defer iterator.Close()
 
 	for ; iterator.Valid(); iterator.Next() {
@@ -1422,14 +1031,14 @@ func (k Keeper) IsAllowlisted(
 	providerAddr types.ProviderConsAddress,
 ) bool {
 	store := ctx.KVStore(k.storeKey)
-	bz := store.Get(types.AllowlistCapKey(chainID, providerAddr))
+	bz := store.Get(types.AllowlistKey(chainID, providerAddr))
 	return bz != nil
 }
 
 // DeleteAllowlist deletes all allowlisted validators
 func (k Keeper) DeleteAllowlist(ctx sdk.Context, chainID string) {
 	store := ctx.KVStore(k.storeKey)
-	iterator := sdk.KVStorePrefixIterator(store, types.ChainIdWithLenKey(types.AllowlistPrefix, chainID))
+	iterator := storetypes.KVStorePrefixIterator(store, types.ChainIdWithLenKey(types.AllowlistKeyPrefix(), chainID))
 	defer iterator.Close()
 
 	keysToDel := [][]byte{}
@@ -1445,7 +1054,7 @@ func (k Keeper) DeleteAllowlist(ctx sdk.Context, chainID string) {
 // IsAllowlistEmpty returns `true` if no validator is allowlisted on chain `chainID`
 func (k Keeper) IsAllowlistEmpty(ctx sdk.Context, chainID string) bool {
 	store := ctx.KVStore(k.storeKey)
-	iterator := sdk.KVStorePrefixIterator(store, types.ChainIdWithLenKey(types.AllowlistPrefix, chainID))
+	iterator := storetypes.KVStorePrefixIterator(store, types.ChainIdWithLenKey(types.AllowlistKeyPrefix(), chainID))
 	defer iterator.Close()
 
 	return !iterator.Valid()
@@ -1458,7 +1067,7 @@ func (k Keeper) SetDenylist(
 	providerAddr types.ProviderConsAddress,
 ) {
 	store := ctx.KVStore(k.storeKey)
-	store.Set(types.DenylistCapKey(chainID, providerAddr), []byte{})
+	store.Set(types.DenylistKey(chainID, providerAddr), []byte{})
 }
 
 // GetDenyList returns all denylisted validators
@@ -1467,8 +1076,8 @@ func (k Keeper) GetDenyList(
 	chainID string,
 ) (providerConsAddresses []types.ProviderConsAddress) {
 	store := ctx.KVStore(k.storeKey)
-	key := types.ChainIdWithLenKey(types.DenylistPrefix, chainID)
-	iterator := sdk.KVStorePrefixIterator(store, key)
+	key := types.ChainIdWithLenKey(types.DenylistKeyPrefix(), chainID)
+	iterator := storetypes.KVStorePrefixIterator(store, key)
 	defer iterator.Close()
 
 	for ; iterator.Valid(); iterator.Next() {
@@ -1485,14 +1094,14 @@ func (k Keeper) IsDenylisted(
 	providerAddr types.ProviderConsAddress,
 ) bool {
 	store := ctx.KVStore(k.storeKey)
-	bz := store.Get(types.DenylistCapKey(chainID, providerAddr))
+	bz := store.Get(types.DenylistKey(chainID, providerAddr))
 	return bz != nil
 }
 
 // DeleteDenylist deletes all denylisted validators
 func (k Keeper) DeleteDenylist(ctx sdk.Context, chainID string) {
 	store := ctx.KVStore(k.storeKey)
-	iterator := sdk.KVStorePrefixIterator(store, types.ChainIdWithLenKey(types.DenylistPrefix, chainID))
+	iterator := storetypes.KVStorePrefixIterator(store, types.ChainIdWithLenKey(types.DenylistKeyPrefix(), chainID))
 	defer iterator.Close()
 
 	keysToDel := [][]byte{}
@@ -1508,7 +1117,7 @@ func (k Keeper) DeleteDenylist(ctx sdk.Context, chainID string) {
 // IsDenylistEmpty returns `true` if no validator is denylisted on chain `chainID`
 func (k Keeper) IsDenylistEmpty(ctx sdk.Context, chainID string) bool {
 	store := ctx.KVStore(k.storeKey)
-	iterator := sdk.KVStorePrefixIterator(store, types.ChainIdWithLenKey(types.DenylistPrefix, chainID))
+	iterator := storetypes.KVStorePrefixIterator(store, types.ChainIdWithLenKey(types.DenylistKeyPrefix(), chainID))
 	defer iterator.Close()
 
 	return !iterator.Valid()
@@ -1551,4 +1160,95 @@ func (k Keeper) DeleteMinimumPowerInTopN(
 ) {
 	store := ctx.KVStore(k.storeKey)
 	store.Delete(types.MinimumPowerInTopNKey(chainID))
+}
+
+// SetMinStake sets the minimum stake required for a validator to validate
+// a given consumer chain.
+func (k Keeper) SetMinStake(
+	ctx sdk.Context,
+	chainID string,
+	minStake uint64,
+) {
+	store := ctx.KVStore(k.storeKey)
+
+	buf := make([]byte, 8)
+	binary.BigEndian.PutUint64(buf, minStake)
+
+	store.Set(types.MinStakeKey(chainID), buf)
+}
+
+// GetMinStake returns the minimum stake required for a validator to validate
+// a given consumer chain.
+func (k Keeper) GetMinStake(
+	ctx sdk.Context,
+	chainID string,
+) (uint64, bool) {
+	store := ctx.KVStore(k.storeKey)
+	buf := store.Get(types.MinStakeKey(chainID))
+	if buf == nil {
+		return 0, false
+	}
+	return binary.BigEndian.Uint64(buf), true
+}
+
+// DeleteMinStake removes the minimum stake required for a validator to validate
+// a given consumer chain.
+func (k Keeper) DeleteMinStake(
+	ctx sdk.Context,
+	chainID string,
+) {
+	store := ctx.KVStore(k.storeKey)
+	store.Delete(types.MinStakeKey(chainID))
+}
+
+// SetInactiveValidatorsAllowed sets whether inactive validators are allowed to validate
+// a given consumer chain.
+func (k Keeper) SetInactiveValidatorsAllowed(
+	ctx sdk.Context,
+	chainID string,
+	allowed bool,
+) {
+	if allowed {
+		k.EnableInactiveValidators(ctx, chainID)
+	} else {
+		k.DisableInactiveValidators(ctx, chainID)
+	}
+}
+
+// EnableInactiveValidators sets the flag to signal that inactive validators are allowed to validate
+// a given consumer chain.
+func (k Keeper) EnableInactiveValidators(
+	ctx sdk.Context,
+	chainID string,
+) {
+	store := ctx.KVStore(k.storeKey)
+	store.Set(types.AllowInactiveValidatorsKey(chainID), []byte{})
+}
+
+// AllowsInactiveValidators returns whether inactive validators are allowed to validate
+// a given consumer chain.
+func (k Keeper) AllowsInactiveValidators(
+	ctx sdk.Context,
+	chainID string,
+) bool {
+	store := ctx.KVStore(k.storeKey)
+	return store.Has(types.AllowInactiveValidatorsKey(chainID))
+}
+
+// DisableInactiveValidators removes the flag of whether inactive validators are allowed to validate
+// a given consumer chain.
+func (k Keeper) DisableInactiveValidators(
+	ctx sdk.Context,
+	chainID string,
+) {
+	store := ctx.KVStore(k.storeKey)
+	store.Delete(types.AllowInactiveValidatorsKey(chainID))
+}
+
+func (k Keeper) UnbondingCanComplete(ctx sdk.Context, id uint64) error {
+	return k.stakingKeeper.UnbondingCanComplete(ctx, id)
+}
+
+func (k Keeper) UnbondingTime(ctx sdk.Context) (time.Duration, error) {
+	return k.stakingKeeper.UnbondingTime(ctx)
 }

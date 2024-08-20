@@ -145,6 +145,19 @@ verify-models:
 	../run_invariants.sh
 
 
+###############################################################################
+###                         Simulation tests                                ###
+
+# Run a full simulation test
+sim-full:
+	cd app/provider;\
+	go test -mod=readonly . -run=^TestFullAppSimulation$  -Enabled=true -NumBlocks=500 -BlockSize=200 -Commit=true -timeout 24h -v
+
+# Run full simulation without any inactive validators
+sim-full-no-inactive-vals:
+	cd app/provider;\
+	go test -mod=readonly . -run=^TestFullAppSimulation$  -Enabled=true -NumBlocks=500 -BlockSize=200 -Commit=true -timeout 24h -Params=no_inactive_vals_params.json -v
+
 
 ###############################################################################
 ###                                Linting                                  ###
@@ -188,7 +201,7 @@ $(BUILDDIR)/:
 DOCKER := $(shell which docker)
 HTTPS_GIT := https://github.com/cosmos/interchain-security.git
 
-containerProtoVer=0.13.0
+containerProtoVer=0.14.0
 containerProtoImage=ghcr.io/cosmos/proto-builder:$(containerProtoVer)
 
 protoImage=$(DOCKER) run --rm -v $(CURDIR):/workspace --workdir /workspace $(containerProtoImage)

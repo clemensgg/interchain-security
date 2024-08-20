@@ -11,7 +11,10 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout sync branch
+    - name: Checkout the repository
+      uses: actions/checkout@v4
+
+    - name: Set up Git
       run: |
         git config user.name "github-actions[bot]"
         git config user.email "github-actions[bot]@users.noreply.github.com"

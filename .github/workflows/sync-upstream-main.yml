@@ -27,11 +27,13 @@ jobs:
       run: |
         git fetch upstream
         git merge upstream/main --allow-unrelated-histories --no-edit || true
-    
-#    - name: Remove workflow files
-#      run: |
-#        git rm -r --cached .github/workflows/ || echo "No workflow files to remove"
-#        git commit -m "Remove workflow files after sync" || echo "No changes to commit"
+
+    - name: Pull latest changes from origin before pushing
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        git remote set-url origin https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/clemensgg/interchain-security.git
+        git pull origin upstream-sync --rebase
 
     - name: Push changes and tags using GITHUB_TOKEN
       env:
@@ -39,4 +41,3 @@ jobs:
       run: |
         git push origin upstream-sync
         git push origin --tags
-

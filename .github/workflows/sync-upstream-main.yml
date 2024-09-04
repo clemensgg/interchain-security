@@ -28,10 +28,10 @@ jobs:
         git fetch upstream
         git merge upstream/main --allow-unrelated-histories --no-edit || true
     
-    - name: Remove workflow files
-      run: |
-        git rm -r --cached .github/workflows/ || echo "No workflow files to remove"
-        git commit -m "Remove workflow files after sync" || echo "No changes to commit"
+#    - name: Remove workflow files
+#      run: |
+#        git rm -r --cached .github/workflows/ || echo "No workflow files to remove"
+#        git commit -m "Remove workflow files after sync" || echo "No changes to commit"
 
     - name: Push changes and tags using GITHUB_TOKEN
       env:
